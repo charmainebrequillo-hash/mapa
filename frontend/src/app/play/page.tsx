@@ -167,8 +167,8 @@ export default function PlayPage() {
     setMatchError(null);
     try {
       const r = await getRoom(targetId);
-      if (r.state !== RoomState.Waiting) {
-        setMatchError("Room is no longer accepting players");
+      if (r.player2 !== null) {
+        setMatchError("Room already has two players");
         setLoading(false);
         return;
       }

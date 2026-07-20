@@ -111,6 +111,20 @@ export async function submitGuess(
   );
 }
 
+const ROOM_STATE_MAP: Record<string, RoomState> = {
+  Waiting: RoomState.Waiting,
+  Ready: RoomState.Ready,
+  Guessed1: RoomState.Guessed1,
+  Guessed2: RoomState.Guessed2,
+  Completed: RoomState.Completed,
+  Claimed: RoomState.Claimed,
+};
+
+function parseRoomState(raw: any): RoomState {
+  if (typeof raw === "number") return raw as RoomState;
+  return ROOM_STATE_MAP[String(raw)] ?? RoomState.Waiting;
+}
+
 export async function getRoom(roomId: number): Promise<Room> {
   const result: any = await readContract(CONTRACTS.mapaGame, "get_room", [arg.u64(roomId)]);
   return {
@@ -125,7 +139,7 @@ export async function getRoom(roomId: number): Promise<Room> {
     distance1: Number(result.distance1),
     distance2: Number(result.distance2),
     winner: result.winner ? result.winner.toString() : null,
-    state: result.state as RoomState,
+    state: parseRoomState(result.state),
     timestamp: Number(result.timestamp),
   };
 }
