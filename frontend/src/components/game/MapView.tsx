@@ -1,7 +1,7 @@
 "use client";
 
 import { useRef, useEffect, useState } from "react";
-import { MapPin } from "lucide-react";
+import { useGoogleMaps } from "./GoogleMapsProvider";
 
 interface MapViewProps {
   lat?: number;
@@ -16,9 +16,10 @@ export function MapView({ lat = 20, lng = 0, onClick, guess, actual, interactive
   const mapRef = useRef<HTMLDivElement>(null);
   const [map, setMap] = useState<google.maps.Map | null>(null);
   const [markers, setMarkers] = useState<google.maps.Marker[]>([]);
+  const { isLoaded, error: mapsError } = useGoogleMaps();
 
   useEffect(() => {
-    if (!mapRef.current || !window.google?.maps) return;
+    if (mapsError || !isLoaded || !mapRef.current) return;
 
     const gMap = new google.maps.Map(mapRef.current, {
       center: { lat, lng },
@@ -51,7 +52,7 @@ export function MapView({ lat = 20, lng = 0, onClick, guess, actual, interactive
         onClick(clickLat, clickLng);
       });
     }
-  }, []);
+  }, [isLoaded, mapsError, lat, lng, interactive, onClick]);
 
   useEffect(() => {
     if (!map) return;

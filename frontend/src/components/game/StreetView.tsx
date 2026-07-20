@@ -2,6 +2,7 @@
 
 import { useRef, useEffect, useState } from "react";
 import { Compass, Loader2 } from "lucide-react";
+import { useGoogleMaps } from "./GoogleMapsProvider";
 
 interface StreetViewProps {
   lat?: number;
@@ -15,11 +16,15 @@ export function StreetView({ lat = 48.8566, lng = 2.3522, heading = 0, pitch = 0
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const panoramaRef = useRef<google.maps.StreetViewPanorama | null>(null);
+  const { isLoaded, error: mapsError } = useGoogleMaps();
 
   useEffect(() => {
-    if (!ref.current || !window.google?.maps) {
+    if (mapsError) {
       setLoading(false);
-      setError("Google Maps not loaded");
+      setError(mapsError);
+      return;
+    }
+    if (!ref.current || !isLoaded) {
       return;
     }
 
@@ -31,8 +36,7 @@ export function StreetView({ lat = 48.8566, lng = 2.3522, heading = 0, pitch = 0
       if (status === google.maps.StreetViewStatus.OK && data?.location?.pano) {
         const panorama = new google.maps.StreetViewPanorama(ref.current!, {
           pano: data.location.pano,
-          heading,
-          pitch,
+          pov: { heading, pitch },
           zoom: 1,
           addressControl: false,
           showRoadLabels: false,
@@ -52,7 +56,7 @@ export function StreetView({ lat = 48.8566, lng = 2.3522, heading = 0, pitch = 0
         setLoading(false);
       }
     });
-  }, [lat, lng]);
+  }, [lat, lng, isLoaded, mapsError]);
 
   return (
     <div className="street-view-container glass-panel relative">

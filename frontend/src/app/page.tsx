@@ -1,7 +1,7 @@
 "use client";
 
 import { motion } from "framer-motion";
-import { MapPin, Trophy, Wallet, Target, ArrowRight, Globe, Compass, Star } from "lucide-react";
+import { MapPin, Trophy, Target, ArrowRight, Globe, Compass, Star, Coins } from "lucide-react";
 import { WalletConnector } from "@/components/wallet/WalletConnector";
 import { useWallet } from "@/components/wallet/WalletProvider";
 import { useRouter } from "next/navigation";
@@ -14,7 +14,7 @@ export default function LandingPage() {
     <div className="min-h-screen flex flex-col">
       <nav className="flex items-center justify-between px-6 py-4 border-b border-white/5">
         <div className="flex items-center gap-2">
-          <Globe className="w-6 h-6 text-mapa-400" />
+          <Coins className="w-6 h-6 text-mapa-400" />
           <span className="font-bold text-lg">Mapa</span>
         </div>
         <WalletConnector />
@@ -38,8 +38,8 @@ export default function LandingPage() {
           </h1>
 
           <p className="text-lg text-white/50 mb-10 max-w-lg mx-auto">
-            Drop a pin anywhere on the map. The closer you are to the mystery location,
-            the more XLM you earn. Every guess is a chance to explore the world.
+            Stake XLM, drop a pin on the map. The closer you are to the mystery location,
+            the more you win. Every guess is a chance to explore the world and earn.
           </p>
 
           <div className="flex flex-col sm:flex-row items-center justify-center gap-4">

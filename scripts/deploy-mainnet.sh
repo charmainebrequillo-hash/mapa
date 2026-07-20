@@ -19,16 +19,15 @@ if [ "${DRY_RUN:-false}" = "true" ]; then
   exit 0
 fi
 
-SOROBAN_RPC="${SOROBAN_RPC:-https://soroban-rpc.mainnet.stellar.gateway.fm}"
-SOROBAN_PASSPHRASE="${SOROBAN_PASSPHRASE:-Public Global Stellar Network ; September 2015}"
-SOROBAN_SECRET_KEY="${MAINNET_DEPLOYER_SECRET:-}"
+export STELLAR_RPC_URL="${SOROBAN_RPC:-https://soroban-rpc.mainnet.stellar.gateway.fm}"
+export STELLAR_NETWORK_PASSPHRASE="${SOROBAN_PASSPHRASE:-Public Global Stellar Network ; September 2015}"
+export STELLAR_ACCOUNT="${MAINNET_DEPLOYER_SECRET:-}"
+TOKEN_ADDRESS="${TOKEN_ADDRESS:-}"
 
-if [ -z "$SOROBAN_SECRET_KEY" ]; then
+if [ -z "$STELLAR_ACCOUNT" ]; then
   echo "Error: MAINNET_DEPLOYER_SECRET not set"
   exit 1
 fi
-
-TOKEN_ADDRESS="${TOKEN_ADDRESS:-}"
 
 if [ -z "$TOKEN_ADDRESS" ]; then
   echo "Error: TOKEN_ADDRESS not set"
@@ -36,9 +35,9 @@ if [ -z "$TOKEN_ADDRESS" ]; then
 fi
 
 echo "Network: Mainnet"
-echo "RPC: $SOROBAN_RPC"
+echo "RPC: $STELLAR_RPC_URL"
 
-NETWORK_ARGS="--rpc-url $SOROBAN_RPC --network-passphrase \"$SOROBAN_PASSPHRASE\" --source $SOROBAN_SECRET_KEY"
+NETWORK="--network mainnet"
 
 echo ""
 echo "Building contracts..."
@@ -51,28 +50,31 @@ done
 echo ""
 echo "Deploying contracts..."
 VAULT_WASM=$(find contracts/target/wasm32v1-none/release -name "mapa_location_vault.wasm" | head -1)
-VAULT_ID=$(stellar contract deploy --wasm "$VAULT_WASM" $NETWORK_ARGS)
+VAULT_ID=$(stellar contract deploy --wasm "$VAULT_WASM" $NETWORK)
 echo "LocationVault deployed: $VAULT_ID"
 
 GAME_WASM=$(find contracts/target/wasm32v1-none/release -name "mapa_game.wasm" | head -1)
-GAME_ID=$(stellar contract deploy --wasm "$GAME_WASM" $NETWORK_ARGS)
+GAME_ID=$(stellar contract deploy --wasm "$GAME_WASM" $NETWORK)
 echo "MapaGame deployed: $GAME_ID"
 
 echo ""
 echo "Initializing contracts..."
+
+VAULT_ADMIN=$(stellar keys address richie)
+
 stellar contract invoke \
   --id "$VAULT_ID" \
   --fn initialize \
-  --arg "$(stellar address $SOROBAN_SECRET_KEY)" \
-  $NETWORK_ARGS
+  --arg "$VAULT_ADMIN" \
+  $NETWORK
 
 stellar contract invoke \
   --id "$GAME_ID" \
   --fn initialize \
-  --arg "$(stellar address $SOROBAN_SECRET_KEY)" \
+  --arg "$VAULT_ADMIN" \
   --arg "$VAULT_ID" \
   --arg "$TOKEN_ADDRESS" \
-  $NETWORK_ARGS
+  $NETWORK
 
 echo ""
 echo "=== Mainnet Deployment Complete ==="

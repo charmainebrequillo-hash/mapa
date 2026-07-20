@@ -1,7 +1,25 @@
 "use client";
 
 import { createContext, useContext, useCallback, useState, useEffect, ReactNode } from "react";
-import { isAllowed, setAllowed, signTransaction as freighterSign } from "@stellar/freighter-api";
+import {
+  StellarWalletsKit,
+  Networks,
+  KitEventType,
+} from "@creit.tech/stellar-wallets-kit";
+import { FreighterModule } from "@creit.tech/stellar-wallets-kit/modules/freighter";
+import { xBullModule } from "@creit.tech/stellar-wallets-kit/modules/xbull";
+import { LobstrModule } from "@creit.tech/stellar-wallets-kit/modules/lobstr";
+import { HanaModule } from "@creit.tech/stellar-wallets-kit/modules/hana";
+
+const network =
+  process.env.NEXT_PUBLIC_STELLAR_NETWORK === "pubnet"
+    ? Networks.PUBLIC
+    : Networks.TESTNET;
+
+const networkPassphrase =
+  process.env.NEXT_PUBLIC_STELLAR_NETWORK === "pubnet"
+    ? "Public Global Stellar Network ; September 2015"
+    : "Test SDF Network ; September 2015";
 
 interface WalletContextType {
   publicKey: string | null;
@@ -28,28 +46,40 @@ export function useWallet() {
 export function WalletProvider({ children }: { children: ReactNode }) {
   const [publicKey, setPublicKey] = useState<string | null>(null);
   const [isConnecting, setIsConnecting] = useState(false);
+  const [kitReady, setKitReady] = useState(false);
+
+  const kit = StellarWalletsKit;
 
   useEffect(() => {
-    checkConnection();
-  }, []);
+    kit.init({
+      modules: [
+        new FreighterModule(),
+        new xBullModule(),
+        new LobstrModule(),
+        new HanaModule(),
+      ],
+      network,
+    });
 
-  async function checkConnection() {
-    try {
-      const allowed = await isAllowed();
-      if (allowed) {
-        const { address } = await window.freighterApi.getAddress({ network: "testnet" });
-        setPublicKey(address);
+    const unsub = kit.on(KitEventType.STATE_UPDATED, (event) => {
+      if (event.payload.address) {
+        setPublicKey(event.payload.address);
+      } else {
+        setPublicKey(null);
       }
-    } catch {
-      // Freighter not available
-    }
-  }
+    });
+
+    setKitReady(true);
+
+    return () => {
+      unsub();
+    };
+  }, []);
 
   const connect = useCallback(async () => {
     setIsConnecting(true);
     try {
-      await setAllowed();
-      const { address } = await window.freighterApi.getAddress({ network: "testnet" });
+      const { address } = await kit.authModal();
       setPublicKey(address);
     } catch (err) {
       console.error("Failed to connect wallet:", err);
@@ -57,16 +87,26 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     } finally {
       setIsConnecting(false);
     }
-  }, []);
+  }, [kitReady]);
 
-  const disconnect = useCallback(() => {
+  const disconnect = useCallback(async () => {
+    try {
+      await kit.disconnect();
+    } catch {
+      // ignore
+    }
     setPublicKey(null);
   }, []);
 
-  const signTx = useCallback(async (tx: string): Promise<string> => {
-    const { signedTx } = await freighterSign(tx, { network: "testnet" });
-    return signedTx;
-  }, []);
+  const signTx = useCallback(
+    async (tx: string): Promise<string> => {
+      const { signedTxXdr } = await kit.signTransaction(tx, {
+        networkPassphrase,
+      });
+      return signedTxXdr;
+    },
+    []
+  );
 
   return (
     <WalletContext.Provider

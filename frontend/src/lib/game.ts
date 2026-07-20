@@ -1,21 +1,28 @@
-import { xdr } from "@stellar/stellar-sdk";
 import { arg, readContract, writeContract } from "./soroban";
 import { CONTRACTS } from "./contract-ids";
 
-export enum GameState {
-  AwaitingGuess = 0,
-  Completed = 1,
-  Claimed = 2,
+export enum RoomState {
+  Waiting = 0,
+  Ready = 1,
+  Guessed1 = 2,
+  Guessed2 = 3,
+  Completed = 4,
+  Claimed = 5,
 }
 
-export interface Game {
-  player: string;
+export interface Room {
+  player1: string;
+  player2: string;
   location_id: number;
-  guess_lat: number;
-  guess_lng: number;
-  distance: number;
-  score: number;
-  state: GameState;
+  stake: number;
+  guess1_lat: number;
+  guess1_lng: number;
+  guess2_lat: number;
+  guess2_lng: number;
+  distance1: number;
+  distance2: number;
+  winner: string | null;
+  state: RoomState;
   timestamp: number;
 }
 
@@ -26,52 +33,89 @@ export interface Location {
   active: boolean;
 }
 
-export async function startGame(publicKey: string, signTx: (tx: string) => Promise<string>): Promise<number> {
+export async function getMinStake(): Promise<number> {
+  const result = await readContract(CONTRACTS.mapaGame, "get_min_stake", []);
+  return Number(result);
+}
+
+export async function findMatch(
+  publicKey: string,
+  stake: number,
+  locationId: number,
+  signTx: (tx: string) => Promise<string>
+): Promise<number> {
   const result = await writeContract(
     CONTRACTS.mapaGame,
-    "start_game",
-    [arg.address(publicKey)],
+    "find_match",
+    [arg.address(publicKey), arg.i128(stake), arg.u64(locationId)],
     publicKey,
     signTx
   );
   return Number(result);
 }
 
-export async function submitGuess(
-  gameId: number,
-  lat: number,
-  lng: number,
+export async function leaveQueue(
   publicKey: string,
   signTx: (tx: string) => Promise<string>
 ) {
-  const latVal = Math.round(lat * 1_000_000);
-  const lngVal = Math.round(lng * 1_000_000);
-  return writeContract(
+  await writeContract(
     CONTRACTS.mapaGame,
-    "submit_guess",
-    [arg.address(publicKey), arg.u64(gameId), arg.i128(latVal), arg.i128(lngVal)],
+    "leave_queue",
+    [arg.address(publicKey)],
     publicKey,
     signTx
   );
 }
 
-export async function getGame(gameId: number): Promise<Game> {
-  const result: any = await readContract(CONTRACTS.mapaGame, "get_game", [arg.u64(gameId)]);
+export async function submitGuess(
+  roomId: number,
+  lat: number,
+  lng: number,
+  actualLat: number,
+  actualLng: number,
+  publicKey: string,
+  signTx: (tx: string) => Promise<string>
+) {
+  const latVal = Math.round(lat * 1_000_000);
+  const lngVal = Math.round(lng * 1_000_000);
+  const actualLatVal = Math.round(actualLat * 1_000_000);
+  const actualLngVal = Math.round(actualLng * 1_000_000);
+  return writeContract(
+    CONTRACTS.mapaGame,
+    "submit_guess",
+    [arg.address(publicKey), arg.u64(roomId), arg.i128(latVal), arg.i128(lngVal), arg.i128(actualLatVal), arg.i128(actualLngVal)],
+    publicKey,
+    signTx
+  );
+}
+
+export async function getRoom(roomId: number): Promise<Room> {
+  const result: any = await readContract(CONTRACTS.mapaGame, "get_room", [arg.u64(roomId)]);
   return {
-    player: result.player.toString(),
+    player1: result.player1.toString(),
+    player2: result.player2.toString(),
     location_id: Number(result.location_id),
-    guess_lat: Number(result.guess_lat) / 1_000_000,
-    guess_lng: Number(result.guess_lng) / 1_000_000,
-    distance: Number(result.distance),
-    score: Number(result.score),
-    state: result.state as GameState,
+    stake: Number(result.stake),
+    guess1_lat: Number(result.guess1_lat) / 1_000_000,
+    guess1_lng: Number(result.guess1_lng) / 1_000_000,
+    guess2_lat: Number(result.guess2_lat) / 1_000_000,
+    guess2_lng: Number(result.guess2_lng) / 1_000_000,
+    distance1: Number(result.distance1),
+    distance2: Number(result.distance2),
+    winner: result.winner ? result.winner.toString() : null,
+    state: result.state as RoomState,
     timestamp: Number(result.timestamp),
   };
 }
 
-export async function getPlayerGames(publicKey: string): Promise<number[]> {
-  const result: any = await readContract(CONTRACTS.mapaGame, "get_player_games", [arg.address(publicKey)]);
+export async function getPlayerRooms(publicKey: string): Promise<number[]> {
+  const result: any = await readContract(CONTRACTS.mapaGame, "get_player_rooms", [arg.address(publicKey)]);
   return result.map((id: any) => Number(id));
+}
+
+export async function getQueueCount(): Promise<number> {
+  const result = await readContract(CONTRACTS.mapaGame, "get_queue_count", []);
+  return Number(result);
 }
 
 export async function getLocation(locationId: number): Promise<Location> {
@@ -90,29 +134,14 @@ export async function getRandomLocation(): Promise<number> {
 }
 
 export async function claimPrize(
-  gameId: number,
+  roomId: number,
   publicKey: string,
   signTx: (tx: string) => Promise<string>
 ) {
   return writeContract(
     CONTRACTS.mapaGame,
     "claim_prize",
-    [arg.address(publicKey), arg.u64(gameId)],
-    publicKey,
-    signTx
-  );
-}
-
-export async function withdraw(
-  amount: number,
-  to: string,
-  publicKey: string,
-  signTx: (tx: string) => Promise<string>
-) {
-  return writeContract(
-    CONTRACTS.mapaGame,
-    "withdraw",
-    [arg.address(publicKey), arg.i128(amount), arg.address(to)],
+    [arg.address(publicKey), arg.u64(roomId)],
     publicKey,
     signTx
   );
@@ -132,11 +161,15 @@ export function calculateDistance(lat1: number, lng1: number, lat2: number, lng2
   return R * c;
 }
 
+export function formatScore(score: number): number {
+  return Math.round((score / 1_000_000) * 100);
+}
+
 export function formatDistance(meters: number): string {
   if (meters < 1000) return `${Math.round(meters)}m`;
   return `${(meters / 1000).toFixed(1)}km`;
 }
 
-export function formatScore(score: number): number {
-  return Math.round((score / 1_000_000) * 100);
+export function formatStroops(stroops: number): string {
+  return (stroops / 1_000_000).toFixed(2);
 }

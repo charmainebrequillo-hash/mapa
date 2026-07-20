@@ -7,12 +7,13 @@ import { formatDistance, formatScore } from "@/lib/game";
 interface ResultScreenProps {
   distance: number;
   score: number;
+  prize?: number;
   locationName?: string;
   onPlayAgain: () => void;
   onClose: () => void;
 }
 
-export function ResultScreen({ distance, score, locationName, onPlayAgain, onClose }: ResultScreenProps) {
+export function ResultScreen({ distance, score, prize = 0, locationName, onPlayAgain, onClose }: ResultScreenProps) {
   const scorePct = formatScore(score);
   const isPerfect = scorePct >= 99;
   const isGood = scorePct >= 70;
@@ -66,7 +67,7 @@ export function ResultScreen({ distance, score, locationName, onPlayAgain, onClo
             <div className="flex flex-col items-center gap-1 p-3 rounded-xl bg-white/5">
               <Trophy className="w-4 h-4 text-gold" />
               <span className="text-xs text-white/40">Prize</span>
-              <span className="text-lg font-bold text-gold">{((score / 1_000_000) * 0.1).toFixed(4)} XLM</span>
+              <span className="text-lg font-bold text-gold">{(prize / 1_000_000).toFixed(4)} XLM</span>
             </div>
           </div>
 

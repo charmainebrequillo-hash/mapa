@@ -1,36 +1,176 @@
 "use client";
 
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { motion } from "framer-motion";
-import { Loader2, MapPin, Target, ArrowLeft, Globe, Play } from "lucide-react";
+import { Loader2, MapPin, Target, ArrowLeft, Globe, Play, Coins, Users, Clock, Trophy } from "lucide-react";
 import { WalletConnector } from "@/components/wallet/WalletConnector";
 import { StreetView } from "@/components/game/StreetView";
 import { MapView } from "@/components/game/MapView";
 import { ResultScreen } from "@/components/game/ResultScreen";
 import { useWallet } from "@/components/wallet/WalletProvider";
 import {
-  startGame,
+  findMatch,
   submitGuess,
-  getGame,
+  leaveQueue,
+  getRoom,
   getLocation,
   getRandomLocation,
-  Game,
+  getMinStake,
+  getQueueCount,
+  Room,
+  RoomState,
   Location,
-  GameState,
-  calculateDistance,
   formatDistance,
+  formatStroops,
 } from "@/lib/game";
 
-type Phase = "start" | "streetview" | "guessing" | "result";
+type Phase = "lobby" | "matching" | "playing" | "waiting" | "result";
 
 export default function PlayPage() {
   const { isConnected, publicKey, signTx, connect } = useWallet();
-  const [phase, setPhase] = useState<Phase>("start");
+  const [phase, setPhase] = useState<Phase>("lobby");
   const [loading, setLoading] = useState(false);
-  const [gameId, setGameId] = useState<number | null>(null);
+  const [roomId, setRoomId] = useState<number | null>(null);
+  const [room, setRoom] = useState<Room | null>(null);
   const [currentLocation, setCurrentLocation] = useState<Location | null>(null);
   const [guess, setGuess] = useState<{ lat: number; lng: number } | null>(null);
-  const [result, setResult] = useState<{ distance: number; score: number } | null>(null);
+  const [stakeAmount, setStakeAmount] = useState<string>("10");
+  const [minStake, setMinStake] = useState<number>(1000000);
+  const [queueCount, setQueueCount] = useState(0);
+  const [matchError, setMatchError] = useState<string | null>(null);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [opponentGuess, setOpponentGuess] = useState<{ lat: number; lng: number } | null>(null);
+
+  useEffect(() => {
+    getMinStake().then(setMinStake).catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (pollRef.current) clearInterval(pollRef.current);
+    };
+  }, []);
+
+  async function updateRoom(rId: number) {
+    try {
+      const r = await getRoom(rId);
+      setRoom(r);
+      if (r.state >= RoomState.Completed) {
+        stopPolling();
+        setOpponentGuess(
+          r.player1 === publicKey
+            ? { lat: r.guess2_lat, lng: r.guess2_lng }
+            : { lat: r.guess1_lat, lng: r.guess1_lng }
+        );
+        setPhase("result");
+      } else if (r.state === RoomState.Guessed1 || r.state === RoomState.Guessed2) {
+        const myKey = publicKey!;
+        const iGuessed = (r.player1 === myKey && r.state === RoomState.Guessed1) ||
+          (r.player2 === myKey && r.state === RoomState.Guessed2);
+        setOpponentGuess(null);
+        if (iGuessed) {
+          setPhase("waiting");
+        }
+      }
+    } catch {}
+  }
+
+  function startPolling(rId: number) {
+    stopPolling();
+    updateRoom(rId);
+    pollRef.current = setInterval(() => updateRoom(rId), 3000);
+  }
+
+  function stopPolling() {
+    if (pollRef.current) {
+      clearInterval(pollRef.current);
+      pollRef.current = null;
+    }
+  }
+
+  async function handleFindMatch() {
+    setLoading(true);
+    setMatchError(null);
+    try {
+      const stake = Math.round(parseFloat(stakeAmount || "0") * 1_000_000);
+      if (stake < minStake) {
+        setMatchError(`Minimum stake is ${formatStroops(minStake)} XLM`);
+        setLoading(false);
+        return;
+      }
+
+      const locationId = await getRandomLocation();
+      const location = await getLocation(locationId);
+      setCurrentLocation(location);
+
+      setPhase("matching");
+      const result = await findMatch(publicKey!, stake, locationId, signTx);
+
+      if (result === 0) {
+        const qc = await getQueueCount();
+        setQueueCount(qc);
+        const pollMatching = setInterval(async () => {
+          const rId = await findMatch(publicKey!, stake, locationId, signTx);
+          if (rId > 0) {
+            clearInterval(pollMatching);
+            setRoomId(rId);
+            startPolling(rId);
+            setPhase("playing");
+          }
+          const qc = await getQueueCount().catch(() => 0);
+          setQueueCount(qc);
+        }, 3000);
+      } else {
+        setRoomId(result);
+        startPolling(result);
+        setPhase("playing");
+      }
+    } catch (err: any) {
+      setMatchError(err.message || "Failed to find match");
+      setPhase("lobby");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleCancelMatch() {
+    stopPolling();
+    try {
+      await leaveQueue(publicKey!, signTx);
+    } catch {}
+    setPhase("lobby");
+  }
+
+  function handleMapClick(lat: number, lng: number) {
+    setGuess({ lat, lng });
+  }
+
+  async function handleConfirmGuess() {
+    if (!guess || !roomId || !currentLocation || !room) return;
+    setLoading(true);
+    try {
+      await submitGuess(roomId, guess.lat, guess.lng, currentLocation.lat, currentLocation.lng, publicKey!, signTx);
+      startPolling(roomId);
+      setPhase("waiting");
+    } catch (err: any) {
+      console.error("Failed to submit guess:", err);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function handlePlayAgain() {
+    stopPolling();
+    setPhase("lobby");
+    setRoomId(null);
+    setRoom(null);
+    setGuess(null);
+    setOpponentGuess(null);
+    setCurrentLocation(null);
+    setMatchError(null);
+  }
+
+  const isPlayer1 = room && publicKey ? room.player1 === publicKey : true;
 
   if (!isConnected) {
     return (
@@ -38,7 +178,7 @@ export default function PlayPage() {
         <Globe className="w-16 h-16 text-mapa-400/50" />
         <h1 className="text-2xl font-bold">Connect Your Wallet</h1>
         <p className="text-white/40 text-center max-w-md">
-          You need a Stellar wallet to play. Freighter, xBull, or Lobstr — connect one to get started.
+          Connect your Stellar wallet to find a match and play GeoGuessr.
         </p>
         <button
           onClick={connect}
@@ -50,62 +190,15 @@ export default function PlayPage() {
     );
   }
 
-  async function handleStartGame() {
-    setLoading(true);
-    try {
-      const locationId = await getRandomLocation();
-      const location = await getLocation(locationId);
-      setCurrentLocation(location);
-
-      const gid = await startGame(publicKey!, signTx);
-      setGameId(gid);
-      setPhase("streetview");
-    } catch (err) {
-      console.error("Failed to start game:", err);
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  function handleMapClick(lat: number, lng: number) {
-    setGuess({ lat, lng });
-  }
-
-  async function handleConfirmGuess() {
-    if (!guess || !gameId || !currentLocation) return;
-    setLoading(true);
-    try {
-      await submitGuess(gameId, guess.lat, guess.lng, publicKey!, signTx);
-      const game = await getGame(gameId);
-      setResult({
-        distance: calculateDistance(guess.lat, guess.lng, currentLocation.lat, currentLocation.lng),
-        score: game.score,
-      });
-      setPhase("result");
-    } catch (err) {
-      console.error("Failed to submit guess:", err);
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  function handlePlayAgain() {
-    setPhase("start");
-    setGuess(null);
-    setResult(null);
-    setCurrentLocation(null);
-    setGameId(null);
-  }
-
   return (
     <div className="min-h-screen p-4 md:p-6">
       <nav className="flex items-center justify-between mb-6">
         <button
-          onClick={() => (phase === "start" ? (window.location.href = "/") : handlePlayAgain())}
+          onClick={() => (phase === "lobby" ? (window.location.href = "/") : handlePlayAgain())}
           className="flex items-center gap-2 text-white/40 hover:text-white/70 transition-colors"
         >
           <ArrowLeft className="w-4 h-4" />
-          {phase === "start" ? "Home" : "New Game"}
+          {phase === "lobby" ? "Home" : "Leave"}
         </button>
         <div className="flex items-center gap-3">
           <span className="text-sm text-white/30 font-mono">{publicKey?.slice(0, 6)}...</span>
@@ -113,21 +206,43 @@ export default function PlayPage() {
         </div>
       </nav>
 
-      {phase === "start" && (
+      {phase === "lobby" && (
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           className="flex flex-col items-center justify-center min-h-[60vh] gap-8"
         >
           <div className="glass-panel p-12 text-center max-w-md">
-            <Target className="w-16 h-16 text-mapa-400 mx-auto mb-6" />
-            <h2 className="text-2xl font-bold mb-3">Ready to Play?</h2>
-            <p className="text-white/40 mb-2">Entry fee: <span className="text-gold font-bold">0.1 XLM</span></p>
-            <p className="text-sm text-white/30 mb-8">
-              See a street view, guess the location, win XLM based on accuracy.
+            <Users className="w-16 h-16 text-mapa-400 mx-auto mb-6" />
+            <h2 className="text-2xl font-bold mb-3">Find a Match</h2>
+            <p className="text-white/40 mb-2">
+              Min stake: <span className="text-gold font-bold">{formatStroops(minStake)} XLM</span>
             </p>
+            <p className="text-sm text-white/30 mb-6">
+              Stake XLM against another player. Closest guess wins the pot!
+            </p>
+
+            <div className="mb-6">
+              <label className="block text-sm text-white/40 mb-2 text-left">Your Stake (XLM)</label>
+              <input
+                type="number"
+                value={stakeAmount}
+                onChange={(e) => setStakeAmount(e.target.value)}
+                min={formatStroops(minStake)}
+                step="1"
+                className="w-full px-4 py-3 rounded-xl bg-white/5 border border-white/10 text-white font-mono text-lg focus:outline-none focus:border-mapa-400 transition-colors"
+              />
+              <p className="text-xs text-white/20 mt-1 text-left">
+                Winner takes ~95% of the combined pot
+              </p>
+            </div>
+
+            {matchError && (
+              <p className="text-red-400 text-sm mb-4">{matchError}</p>
+            )}
+
             <button
-              onClick={handleStartGame}
+              onClick={handleFindMatch}
               disabled={loading}
               className="w-full py-3 rounded-xl bg-mapa-500 hover:bg-mapa-600 disabled:opacity-50 font-medium transition-all flex items-center justify-center gap-2"
             >
@@ -136,7 +251,7 @@ export default function PlayPage() {
               ) : (
                 <>
                   <Play className="w-4 h-4" />
-                  Start Game
+                  Find Match
                 </>
               )}
             </button>
@@ -144,12 +259,33 @@ export default function PlayPage() {
         </motion.div>
       )}
 
-      {(phase === "streetview" || phase === "guessing") && currentLocation && (
+      {phase === "matching" && (
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          className="flex flex-col items-center justify-center min-h-[60vh] gap-6"
+        >
+          <Loader2 className="w-16 h-16 animate-spin text-mapa-400" />
+          <h2 className="text-xl font-bold">Searching for opponent...</h2>
+          <p className="text-white/40 text-sm flex items-center gap-2">
+            <Users className="w-4 h-4" />
+            {queueCount > 0 ? `${queueCount} player(s) in queue` : "No one in queue yet"}
+          </p>
+          <button
+            onClick={handleCancelMatch}
+            className="px-6 py-2 rounded-full border border-white/10 hover:bg-white/5 text-sm transition-all"
+          >
+            Cancel
+          </button>
+        </motion.div>
+      )}
+
+      {(phase === "playing" || phase === "waiting") && currentLocation && (
         <div className="max-w-5xl mx-auto grid grid-cols-1 lg:grid-cols-2 gap-6">
           <div>
             <h3 className="text-sm text-white/40 mb-2 flex items-center gap-2">
               <Target className="w-3 h-3" />
-              Where is this?
+              {phase === "playing" ? "Where is this?" : "Waiting for opponent..."}
             </h3>
             <StreetView lat={currentLocation.lat} lng={currentLocation.lng} />
           </div>
@@ -159,9 +295,20 @@ export default function PlayPage() {
               <MapPin className="w-3 h-3" />
               {guess ? "You guessed here" : "Click the map to place your guess"}
             </h3>
-            <MapView onClick={handleMapClick} guess={guess} interactive />
+            <MapView
+              onClick={phase === "playing" ? handleMapClick : undefined}
+              guess={guess}
+              interactive={phase === "playing"}
+            />
 
-            {guess && (
+            {phase === "waiting" && (
+              <div className="mt-4 glass-panel p-4 text-center">
+                <Loader2 className="w-6 h-6 animate-spin text-mapa-400 mx-auto mb-2" />
+                <p className="text-sm text-white/40">Waiting for opponent to submit their guess...</p>
+              </div>
+            )}
+
+            {guess && phase === "playing" && (
               <motion.div
                 initial={{ opacity: 0, y: 10 }}
                 animate={{ opacity: 1, y: 0 }}
@@ -174,12 +321,6 @@ export default function PlayPage() {
                       {guess.lat.toFixed(4)}°, {guess.lng.toFixed(4)}°
                     </p>
                   </div>
-                  {currentLocation && (
-                    <div className="text-right">
-                      <p className="text-xs text-white/40">Actual (hidden)</p>
-                      <p className="text-sm text-white/20">???</p>
-                    </div>
-                  )}
                 </div>
                 <button
                   onClick={handleConfirmGuess}
@@ -198,26 +339,60 @@ export default function PlayPage() {
         </div>
       )}
 
-      {phase === "result" && currentLocation && result && (
+      {phase === "result" && currentLocation && room && (
         <div className="max-w-5xl mx-auto">
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
             <StreetView lat={currentLocation.lat} lng={currentLocation.lng} />
             <MapView
               lat={currentLocation.lat}
               lng={currentLocation.lng}
-              guess={guess!}
+              guess={
+                isPlayer1
+                  ? { lat: room.guess1_lat, lng: room.guess1_lng }
+                  : { lat: room.guess2_lat, lng: room.guess2_lng }
+              }
               actual={{ lat: currentLocation.lat, lng: currentLocation.lng }}
               interactive={false}
             />
           </div>
 
-          <ResultScreen
-            distance={result.distance}
-            score={result.score}
-            locationName={`${currentLocation.lat.toFixed(4)}°, ${currentLocation.lng.toFixed(4)}°`}
-            onPlayAgain={handlePlayAgain}
-            onClose={handlePlayAgain}
-          />
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="glass-panel p-6 max-w-lg mx-auto text-center"
+          >
+            <Trophy className={`w-12 h-12 mx-auto mb-3 ${room.winner === publicKey ? "text-gold" : "text-white/20"}`} />
+            <h2 className={`text-2xl font-bold mb-2 ${room.winner === publicKey ? "text-gold" : "text-white/60"}`}>
+              {room.winner === publicKey ? "You Won!" : room.winner ? "You Lost" : "It's a Tie!"}
+            </h2>
+
+            <div className="grid grid-cols-2 gap-4 mt-6 mb-6">
+              <div className="glass-panel p-3">
+                <p className="text-xs text-white/40 mb-1">{isPlayer1 ? "You" : "Opponent"}</p>
+                <p className="text-lg font-bold">{formatDistance(isPlayer1 ? room.distance1 : room.distance2)}</p>
+              </div>
+              <div className="glass-panel p-3">
+                <p className="text-xs text-white/40 mb-1">{isPlayer1 ? "Opponent" : "You"}</p>
+                <p className="text-lg font-bold">{formatDistance(isPlayer1 ? room.distance2 : room.distance1)}</p>
+              </div>
+            </div>
+
+            {opponentGuess && (
+              <div className="glass-panel p-3 mb-6">
+                <p className="text-xs text-white/40 mb-1">Opponent's guess</p>
+                <p className="text-sm font-mono">
+                  {opponentGuess.lat.toFixed(4)}°, {opponentGuess.lng.toFixed(4)}°
+                </p>
+              </div>
+            )}
+
+            <button
+              onClick={handlePlayAgain}
+              className="w-full py-3 rounded-xl bg-mapa-500 hover:bg-mapa-600 font-medium transition-all"
+            >
+              Play Again
+            </button>
+          </motion.div>
         </div>
       )}
     </div>

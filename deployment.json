@@ -1,27 +1,36 @@
 {
   "network": "testnet",
-  "deployed_at": "",
-  "git_commit": "",
-  "deployer": "",
+  "deployed_at": "2026-07-12T16:12:00Z",
+  "deployer": "GBHBOPW5AMW5J6RRR4YU2NLJI3HRX7SG4Q4ZZBJILLDR3644INLHMMZZ",
   "contracts": {
     "mapa_game": {
-      "id": "",
-      "wasm_sha256": "",
+      "id": "CCNCN4AQHJ4WZPSXDQRG5HWCIGMTWC3ZNPFS32QJUJNA6QAJYVFCCUX6",
+      "wasm_sha256": "a47f98ecd3c3a316b1608352d8fe6f85db21ccc76c4e2eee45b7d29a618511cc",
       "src": "contracts/mapa_game/src/lib.rs",
-      "init_args": ["admin", "vault_address", "token_address"]
+      "init_args": ["admin", "vault_address", "token_address"],
+      "features": ["rooms", "auto_matching"]
     },
     "mapa_location_vault": {
-      "id": "",
-      "wasm_sha256": "",
+      "id": "CAY2SXEBLCKGQGYB2L257EOLESFDFOKALZV4PYZBH3JXZYM2W2LEMKOB",
+      "wasm_sha256": "981a59050b9a00f7b5c017dc3082729bffc4d2bedcab92c55bda747958641612",
       "src": "contracts/mapa_location_vault/src/lib.rs",
       "init_args": ["admin"]
     }
   },
+  "seed_locations": [
+    "tokyo_shibuya",
+    "paris_eiffel",
+    "nyc_times_square",
+    "sydney_opera",
+    "london_bridge",
+    "singapore",
+    "rome_colosseum"
+  ],
   "build": {
-    "command": "cargo build --release --target wasm32-unknown-unknown",
+    "command": "cargo build --release --target wasm32v1-none",
     "target": "wasm32v1-none",
     "soroban_sdk": "27.0.0",
-    "stellar_cli": "",
-    "rustc": ""
+    "stellar_cli": "27.0.0",
+    "rustc": "1.96.0"
   }
 }
