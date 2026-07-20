@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useEffect, useState } from "react";
+import { useRef, useEffect, useState, useCallback } from "react";
 import { useGoogleMaps } from "./GoogleMapsProvider";
 import { calculateDistance } from "@/lib/game";
 
@@ -19,16 +19,21 @@ const PIN_SVG = {
 };
 
 export function MapView({ lat = 20, lng = 0, onClick, guess, actual, interactive = true }: MapViewProps) {
-  const mapRef = useRef<HTMLDivElement>(null);
-  const [map, setMap] = useState<google.maps.Map | null>(null);
-  const [overlays, setOverlays] = useState<(google.maps.Marker | google.maps.Polyline)[]>([]);
+  const mapContainerRef = useRef<HTMLDivElement>(null);
+  const mapRef = useRef<google.maps.Map | null>(null);
+  const clickListenerRef = useRef<google.maps.MapsEventListener | null>(null);
+  const onClickRef = useRef(onClick);
+  const overlaysRef = useRef<(google.maps.Marker | google.maps.Polyline)[]>([]);
   const { isLoaded, error: mapsError } = useGoogleMaps();
   const [distance, setDistance] = useState<number | null>(null);
+  const [mapReady, setMapReady] = useState(false);
+
+  onClickRef.current = onClick;
 
   useEffect(() => {
-    if (mapsError || !isLoaded || !mapRef.current) return;
+    if (mapsError || !isLoaded || !mapContainerRef.current || mapRef.current) return;
 
-    const gMap = new google.maps.Map(mapRef.current, {
+    const gMap = new google.maps.Map(mapContainerRef.current, {
       center: { lat, lng },
       zoom: 2,
       minZoom: 2,
@@ -46,21 +51,39 @@ export function MapView({ lat = 20, lng = 0, onClick, guess, actual, interactive
       draggableCursor: interactive ? "crosshair" : "grab",
     });
 
-    setMap(gMap);
-
-    if (interactive && onClick) {
-      gMap.addListener("click", (e: google.maps.MapMouseEvent) => {
-        const clickLat = e.latLng!.lat();
-        const clickLng = e.latLng!.lng();
-        onClick(clickLat, clickLng);
-      });
-    }
-  }, [isLoaded, mapsError, interactive, onClick]);
+    mapRef.current = gMap;
+    setMapReady(true);
+  }, [isLoaded, mapsError]);
 
   useEffect(() => {
+    const map = mapRef.current;
     if (!map) return;
 
-    overlays.forEach((o) => o.setMap(null));
+    if (clickListenerRef.current) {
+      clickListenerRef.current.remove();
+      clickListenerRef.current = null;
+    }
+
+    if (interactive && onClickRef.current) {
+      clickListenerRef.current = map.addListener("click", (e: google.maps.MapMouseEvent) => {
+        onClickRef.current!(e.latLng!.lat(), e.latLng!.lng());
+      });
+    }
+
+    return () => {
+      if (clickListenerRef.current) {
+        clickListenerRef.current.remove();
+        clickListenerRef.current = null;
+      }
+    };
+  }, [interactive, mapReady]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+
+    overlaysRef.current.forEach((o) => o.setMap(null));
+    overlaysRef.current = [];
 
     const newOverlays: (google.maps.Marker | google.maps.Polyline)[] = [];
     let dist: number | null = null;
@@ -96,7 +119,7 @@ export function MapView({ lat = 20, lng = 0, onClick, guess, actual, interactive
           scale: 1.8,
           anchor: new google.maps.Point(PIN_SVG.anchor.x, PIN_SVG.anchor.y),
         },
-        label: { text: "✓", color: "#000", fontSize: "11px", fontWeight: "bold" },
+        label: { text: "\u2713", color: "#000", fontSize: "11px", fontWeight: "bold" },
       });
       newOverlays.push(actualPin);
 
@@ -135,13 +158,9 @@ export function MapView({ lat = 20, lng = 0, onClick, guess, actual, interactive
       map.setZoom(4);
     }
 
+    overlaysRef.current = newOverlays;
     setDistance(dist);
-    setOverlays(newOverlays);
-
-    return () => {
-      newOverlays.forEach((o) => o.setMap(null));
-    };
-  }, [map, guess, actual]);
+  }, [mapReady, guess, actual]);
 
   if (mapsError) {
     return (
@@ -164,7 +183,7 @@ export function MapView({ lat = 20, lng = 0, onClick, guess, actual, interactive
 
   return (
     <div className="relative overflow-hidden rounded-xl">
-      <div ref={mapRef} className="map-container" style={{ height: "400px" }} />
+      <div ref={mapContainerRef} className="map-container" style={{ height: "400px" }} />
       {distance !== null && (
         <div className="absolute bottom-3 left-3 glass-panel-strong px-3 py-1.5 z-10">
           <span className="text-[10px] text-white/30 font-mono tracking-wider">DISTANCE </span>
