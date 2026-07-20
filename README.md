@@ -1,7 +1,7 @@
 # Mapa — GeoGuessr on Stellar
 
-[![Contracts](https://github.com/rylsherdamzs/Mapa/actions/workflows/contracts.yml/badge.svg)](https://github.com/rylsherdamzs/Mapa/actions/workflows/contracts.yml)
-[![Frontend](https://github.com/rylsherdamzs/Mapa/actions/workflows/frontend.yml/badge.svg)](https://github.com/rylsherdamzs/Mapa/actions/workflows/frontend.yml)
+[![Contracts](https://github.com/charmainebrequillo-hash/mapa/actions/workflows/contracts.yml/badge.svg)](https://github.com/charmainebrequillo-hash/mapa/actions/workflows/contracts.yml)
+[![Frontend](https://github.com/charmainebrequillo-hash/mapa/actions/workflows/frontend.yml/badge.svg)](https://github.com/charmainebrequillo-hash/mapa/actions/workflows/frontend.yml)
 
 Mapa is a decentralized geography guessing game built on **Stellar Soroban**. Players guess locations from street view imagery and win prizes in **XLM** — the closer the guess, the bigger the payout.
 
