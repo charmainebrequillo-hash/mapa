@@ -12,7 +12,7 @@ export enum RoomState {
 
 export interface Room {
   player1: string;
-  player2: string;
+  player2: string | null;
   location_id: number;
   stake: number;
   guess1_lat: number;
@@ -23,6 +23,13 @@ export interface Room {
   distance2: number;
   winner: string | null;
   state: RoomState;
+  timestamp: number;
+}
+
+export interface OpenRoomInfo {
+  room_id: number;
+  player1: string;
+  stake: number;
   timestamp: number;
 }
 
@@ -38,7 +45,7 @@ export async function getMinStake(): Promise<number> {
   return Number(result);
 }
 
-export async function findMatch(
+export async function autoMatch(
   publicKey: string,
   stake: number,
   locationId: number,
@@ -46,7 +53,7 @@ export async function findMatch(
 ): Promise<number> {
   const result = await writeContract(
     CONTRACTS.mapaGame,
-    "find_match",
+    "auto_match",
     [arg.address(publicKey), arg.i128(stake), arg.u64(locationId)],
     publicKey,
     signTx
@@ -54,14 +61,29 @@ export async function findMatch(
   return Number(result);
 }
 
-export async function leaveQueue(
+export async function joinRoom(
+  roomId: number,
   publicKey: string,
   signTx: (tx: string) => Promise<string>
 ) {
   await writeContract(
     CONTRACTS.mapaGame,
-    "leave_queue",
-    [arg.address(publicKey)],
+    "join_room",
+    [arg.address(publicKey), arg.u64(roomId)],
+    publicKey,
+    signTx
+  );
+}
+
+export async function leaveRoom(
+  roomId: number,
+  publicKey: string,
+  signTx: (tx: string) => Promise<string>
+) {
+  await writeContract(
+    CONTRACTS.mapaGame,
+    "leave_room",
+    [arg.address(publicKey), arg.u64(roomId)],
     publicKey,
     signTx
   );
@@ -93,7 +115,7 @@ export async function getRoom(roomId: number): Promise<Room> {
   const result: any = await readContract(CONTRACTS.mapaGame, "get_room", [arg.u64(roomId)]);
   return {
     player1: result.player1.toString(),
-    player2: result.player2.toString(),
+    player2: result.player2 ? result.player2.toString() : null,
     location_id: Number(result.location_id),
     stake: Number(result.stake),
     guess1_lat: Number(result.guess1_lat) / 1_000_000,
@@ -108,14 +130,19 @@ export async function getRoom(roomId: number): Promise<Room> {
   };
 }
 
+export async function getOpenRooms(): Promise<OpenRoomInfo[]> {
+  const result: any = await readContract(CONTRACTS.mapaGame, "get_open_rooms", []);
+  return result.map((r: any) => ({
+    room_id: Number(r.room_id),
+    player1: r.player1.toString(),
+    stake: Number(r.stake),
+    timestamp: Number(r.timestamp),
+  }));
+}
+
 export async function getPlayerRooms(publicKey: string): Promise<number[]> {
   const result: any = await readContract(CONTRACTS.mapaGame, "get_player_rooms", [arg.address(publicKey)]);
   return result.map((id: any) => Number(id));
-}
-
-export async function getQueueCount(): Promise<number> {
-  const result = await readContract(CONTRACTS.mapaGame, "get_queue_count", []);
-  return Number(result);
 }
 
 export async function getLocation(locationId: number): Promise<Location> {

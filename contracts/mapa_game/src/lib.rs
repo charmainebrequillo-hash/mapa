@@ -5,12 +5,13 @@ const DAY_IN_LEDGERS: u32 = 17280;
 const BUMP_AMOUNT: u32 = 30 * DAY_IN_LEDGERS;
 const PLATFORM_FEE_BPS: i128 = 250;
 const MIN_STAKE_DEFAULT: i128 = 1_000_000;
+const MAX_OPEN_ROOMS: u32 = 20;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[contracttype]
 pub struct Room {
     pub player1: Address,
-    pub player2: Address,
+    pub player2: Option<Address>,
     pub location_id: u64,
     pub stake: i128,
     pub guess1_lat: i128,
@@ -37,14 +38,6 @@ pub enum RoomState {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[contracttype]
-pub struct QueueEntry {
-    pub player: Address,
-    pub stake: i128,
-    pub location_id: u64,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-#[contracttype]
 pub enum DataKey {
     Admin,
     MinStake,
@@ -52,8 +45,17 @@ pub enum DataKey {
     Vault,
     NextRoomId,
     Room(u64),
-    Queue,
     PlayerRooms(Address),
+    OpenRooms,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[contracttype]
+pub struct OpenRoomInfo {
+    pub room_id: u64,
+    pub player1: Address,
+    pub stake: i128,
+    pub timestamp: u64,
 }
 
 #[contract]
@@ -88,7 +90,7 @@ impl MapaGame {
         env.storage().instance().set(&DataKey::MinStake, &min_stake);
     }
 
-    pub fn find_match(env: Env, player: Address, stake: i128, location_id: u64) -> u64 {
+    pub fn auto_match(env: Env, player: Address, stake: i128, location_id: u64) -> u64 {
         player.require_auth();
 
         let min_stake: i128 = env.storage().instance().get(&DataKey::MinStake).unwrap();
@@ -96,90 +98,122 @@ impl MapaGame {
             panic!("stake below minimum");
         }
 
+        let open_ids: Vec<u64> = env.storage().instance().get(&DataKey::OpenRooms).unwrap_or(Vec::new(&env));
+
+        for i in 0..open_ids.len() {
+            let rid = open_ids.get(i).unwrap();
+            let room: Room = env.storage().persistent().get(&DataKey::Room(rid)).unwrap();
+
+            if room.stake == stake && room.player2.is_none() && room.state == RoomState::Waiting {
+                Self::join_room_inner(&env, player, rid, room);
+                return rid;
+            }
+        }
+
+        let room_id: u64 = env.storage().instance().get(&DataKey::NextRoomId).unwrap();
+        env.storage().instance().set(&DataKey::NextRoomId, &(room_id + 1));
+
         let token: Address = env.storage().instance().get(&DataKey::Token).unwrap();
-        let queue: Vec<QueueEntry> = env.storage().instance().get(&DataKey::Queue).unwrap_or(Vec::new(&env));
-
-        for entry in queue.iter() {
-            if entry.player == player {
-                panic!("player already in queue");
-            }
-        }
-
-        for i in 0..queue.len() {
-            let entry = queue.get(i).unwrap();
-            if entry.player != player && entry.stake == stake && entry.location_id == location_id {
-                let mut new_queue: Vec<QueueEntry> = Vec::new(&env);
-                for j in 0..queue.len() {
-                    if j != i {
-                        new_queue.push_back(queue.get(j).unwrap());
-                    }
-                }
-                env.storage().instance().set(&DataKey::Queue, &new_queue);
-
-                token::Client::new(&env, &token).transfer(&player, &env.current_contract_address(), &stake);
-
-                let room_id: u64 = env.storage().instance().get(&DataKey::NextRoomId).unwrap();
-                env.storage().instance().set(&DataKey::NextRoomId, &(room_id + 1));
-
-                let room = Room {
-                    player1: entry.player.clone(),
-                    player2: player.clone(),
-                    location_id,
-                    stake,
-                    guess1_lat: 0,
-                    guess1_lng: 0,
-                    guess2_lat: 0,
-                    guess2_lng: 0,
-                    distance1: 0,
-                    distance2: 0,
-                    winner: None,
-                    state: RoomState::Ready,
-                    timestamp: env.ledger().timestamp(),
-                };
-                env.storage().persistent().set(&DataKey::Room(room_id), &room);
-                env.storage().persistent().extend_ttl(&DataKey::Room(room_id), BUMP_AMOUNT, BUMP_AMOUNT);
-
-                for p in [entry.player.clone(), player.clone()] {
-                    let mut rooms: Vec<u64> = env.storage().persistent().get(&DataKey::PlayerRooms(p.clone())).unwrap_or(Vec::new(&env));
-                    rooms.push_back(room_id);
-                    env.storage().persistent().set(&DataKey::PlayerRooms(p.clone()), &rooms);
-                    env.storage().persistent().extend_ttl(&DataKey::PlayerRooms(p.clone()), BUMP_AMOUNT, BUMP_AMOUNT);
-                }
-
-                log!(&env, "match_found", room_id, entry.player, player, stake, location_id);
-                return room_id;
-            }
-        }
-
         token::Client::new(&env, &token).transfer(&player, &env.current_contract_address(), &stake);
 
-        let mut new_queue: Vec<QueueEntry> = queue;
-        new_queue.push_back(QueueEntry { player: player.clone(), stake, location_id });
-        env.storage().instance().set(&DataKey::Queue, &new_queue);
+        let room = Room {
+            player1: player.clone(),
+            player2: None,
+            location_id,
+            stake,
+            guess1_lat: 0,
+            guess1_lng: 0,
+            guess2_lat: 0,
+            guess2_lng: 0,
+            distance1: 0,
+            distance2: 0,
+            winner: None,
+            state: RoomState::Waiting,
+            timestamp: env.ledger().timestamp(),
+        };
+        env.storage().persistent().set(&DataKey::Room(room_id), &room);
+        env.storage().persistent().extend_ttl(&DataKey::Room(room_id), BUMP_AMOUNT, BUMP_AMOUNT);
 
-        log!(&env, "queued", player, stake, location_id);
-        0
+        let mut new_open: Vec<u64> = open_ids;
+        new_open.push_back(room_id);
+        env.storage().instance().set(&DataKey::OpenRooms, &new_open);
+
+        let mut rooms: Vec<u64> = env.storage().persistent().get(&DataKey::PlayerRooms(player.clone())).unwrap_or(Vec::new(&env));
+        rooms.push_back(room_id);
+        env.storage().persistent().set(&DataKey::PlayerRooms(player.clone()), &rooms);
+        env.storage().persistent().extend_ttl(&DataKey::PlayerRooms(player.clone()), BUMP_AMOUNT, BUMP_AMOUNT);
+
+        log!(&env, "room_created", room_id, player, stake, location_id);
+        room_id
     }
 
-    pub fn leave_queue(env: Env, player: Address) {
+    pub fn join_room(env: Env, player: Address, room_id: u64) {
         player.require_auth();
-        let queue: Vec<QueueEntry> = env.storage().instance().get(&DataKey::Queue).unwrap_or(Vec::new(&env));
-        let mut new_queue: Vec<QueueEntry> = Vec::new(&env);
-        let mut found = false;
-        for i in 0..queue.len() {
-            let entry = queue.get(i).unwrap();
-            if entry.player == player {
-                found = true;
-                let token: Address = env.storage().instance().get(&DataKey::Token).unwrap();
-                token::Client::new(&env, &token).transfer(&env.current_contract_address(), &player, &entry.stake);
-            } else {
-                new_queue.push_back(entry);
+        let room: Room = env.storage().persistent().get(&DataKey::Room(room_id)).unwrap();
+        Self::join_room_inner(&env, player, room_id, room);
+    }
+
+    fn join_room_inner(env: &Env, player: Address, room_id: u64, mut room: Room) {
+        if room.state != RoomState::Waiting {
+            panic!("room is not open");
+        }
+        if room.player1 == player {
+            panic!("cannot join your own room");
+        }
+
+        let token: Address = env.storage().instance().get(&DataKey::Token).unwrap();
+        token::Client::new(env, &token).transfer(&player, &env.current_contract_address(), &room.stake);
+
+        room.player2 = Some(player.clone());
+        room.state = RoomState::Ready;
+        room.timestamp = env.ledger().timestamp();
+
+        env.storage().persistent().set(&DataKey::Room(room_id), &room);
+        env.storage().persistent().extend_ttl(&DataKey::Room(room_id), BUMP_AMOUNT, BUMP_AMOUNT);
+
+        let open_ids: Vec<u64> = env.storage().instance().get(&DataKey::OpenRooms).unwrap_or(Vec::new(env));
+        let mut new_open: Vec<u64> = Vec::new(env);
+        for i in 0..open_ids.len() {
+            let rid = open_ids.get(i).unwrap();
+            if rid != room_id {
+                new_open.push_back(rid);
             }
         }
-        if !found {
-            panic!("not in queue");
+        env.storage().instance().set(&DataKey::OpenRooms, &new_open);
+
+        let mut rooms: Vec<u64> = env.storage().persistent().get(&DataKey::PlayerRooms(player.clone())).unwrap_or(Vec::new(env));
+        rooms.push_back(room_id);
+        env.storage().persistent().set(&DataKey::PlayerRooms(player.clone()), &rooms);
+        env.storage().persistent().extend_ttl(&DataKey::PlayerRooms(player.clone()), BUMP_AMOUNT, BUMP_AMOUNT);
+
+        log!(env, "room_joined", room_id, player, room.stake, room.location_id);
+    }
+
+    pub fn leave_room(env: Env, player: Address, room_id: u64) {
+        player.require_auth();
+        let room: Room = env.storage().persistent().get(&DataKey::Room(room_id)).unwrap();
+        if room.state != RoomState::Waiting {
+            panic!("room is not in waiting state");
         }
-        env.storage().instance().set(&DataKey::Queue, &new_queue);
+        if room.player1 != player {
+            panic!("not your room");
+        }
+
+        let token: Address = env.storage().instance().get(&DataKey::Token).unwrap();
+        token::Client::new(&env, &token).transfer(&env.current_contract_address(), &player, &room.stake);
+
+        let open_ids: Vec<u64> = env.storage().instance().get(&DataKey::OpenRooms).unwrap_or(Vec::new(&env));
+        let mut new_open: Vec<u64> = Vec::new(&env);
+        for i in 0..open_ids.len() {
+            let rid = open_ids.get(i).unwrap();
+            if rid != room_id {
+                new_open.push_back(rid);
+            }
+        }
+        env.storage().instance().set(&DataKey::OpenRooms, &new_open);
+
+        env.storage().persistent().remove(&DataKey::Room(room_id));
+        log!(&env, "room_cancelled", room_id, player);
     }
 
     pub fn submit_guess(env: Env, player: Address, room_id: u64, lat: i128, lng: i128, actual_lat: i128, actual_lng: i128) {
@@ -211,7 +245,7 @@ impl MapaGame {
                 },
                 _ => {},
             }
-        } else if room.player2 == player {
+        } else if room.player2 == Some(player.clone()) {
             if room.state == RoomState::Guessed2 {
                 panic!("already guessed");
             }
@@ -244,7 +278,7 @@ impl MapaGame {
         if d1 < d2 {
             room.winner = Some(room.player1.clone());
         } else if d2 < d1 {
-            room.winner = Some(room.player2.clone());
+            room.winner = Some(room.player2.clone().unwrap());
         }
 
         let token: Address = env.storage().instance().get(&DataKey::Token).unwrap();
@@ -256,7 +290,8 @@ impl MapaGame {
             log!(env, "winner", winner, prize, d1, d2);
         } else {
             token::Client::new(env, &token).transfer(&env.current_contract_address(), &room.player1, &room.stake);
-            token::Client::new(env, &token).transfer(&env.current_contract_address(), &room.player2, &room.stake);
+            let p2 = room.player2.clone().unwrap();
+            token::Client::new(env, &token).transfer(&env.current_contract_address(), &p2, &room.stake);
             log!(env, "tie_refund", room.stake);
         }
     }
@@ -289,9 +324,24 @@ impl MapaGame {
         env.storage().persistent().get(&DataKey::Room(room_id)).unwrap()
     }
 
-    pub fn get_queue_count(env: Env) -> u32 {
-        let queue: Vec<QueueEntry> = env.storage().instance().get(&DataKey::Queue).unwrap_or(Vec::new(&env));
-        queue.len()
+    pub fn get_open_rooms(env: Env) -> Vec<OpenRoomInfo> {
+        let open_ids: Vec<u64> = env.storage().instance().get(&DataKey::OpenRooms).unwrap_or(Vec::new(&env));
+        let mut result: Vec<OpenRoomInfo> = Vec::new(&env);
+        for i in 0..open_ids.len() {
+            let rid = open_ids.get(i).unwrap();
+            let room_exists: Option<Room> = env.storage().persistent().get(&DataKey::Room(rid));
+            if let Some(room) = room_exists {
+                if room.state == RoomState::Waiting && room.player2.is_none() {
+                    result.push_back(OpenRoomInfo {
+                        room_id: rid,
+                        player1: room.player1,
+                        stake: room.stake,
+                        timestamp: room.timestamp,
+                    });
+                }
+            }
+        }
+        result
     }
 
     pub fn get_player_rooms(env: Env, player: Address) -> Vec<u64> {
@@ -401,67 +451,129 @@ mod test {
     }
 
     #[test]
-    fn test_find_match_and_submit() {
+    fn test_auto_match_creates_room() {
+        let (env, _admin, _vault, _token) = setup_test();
+        let player = Address::generate(&env);
+        env.mock_all_auths();
+
+        let room_id = MapaGame::auto_match(&env, player.clone(), MIN_STAKE_DEFAULT, 1);
+        assert!(room_id > 0);
+
+        let room = MapaGame::get_room(&env, room_id);
+        assert_eq!(room.state, RoomState::Waiting);
+        assert_eq!(room.player1, player);
+        assert_eq!(room.player2, None);
+        assert_eq!(room.stake, MIN_STAKE_DEFAULT);
+        assert_eq!(room.location_id, 1);
+    }
+
+    #[test]
+    fn test_auto_match_joins_open_room() {
         let (env, _admin, _vault, _token) = setup_test();
         let player1 = Address::generate(&env);
         let player2 = Address::generate(&env);
-
         env.mock_all_auths();
 
-        let room_id = MapaGame::find_match(&env, player1.clone(), MIN_STAKE_DEFAULT, 1);
-        assert_eq!(room_id, 0, "should queue player1");
+        let room_id = MapaGame::auto_match(&env, player1.clone(), MIN_STAKE_DEFAULT, 1);
+        assert!(room_id > 0);
 
-        let room_id = MapaGame::find_match(&env, player2.clone(), MIN_STAKE_DEFAULT, 1);
-        assert!(room_id > 0, "should match player2");
+        let joined_id = MapaGame::auto_match(&env, player2.clone(), MIN_STAKE_DEFAULT, 99);
+        assert_eq!(joined_id, room_id);
 
         let room = MapaGame::get_room(&env, room_id);
         assert_eq!(room.state, RoomState::Ready);
         assert_eq!(room.player1, player1);
-        assert_eq!(room.player2, player2);
+        assert_eq!(room.player2, Some(player2));
+        assert_eq!(room.location_id, 1);
+    }
+
+    #[test]
+    fn test_join_specific_room() {
+        let (env, _admin, _vault, _token) = setup_test();
+        let player1 = Address::generate(&env);
+        let player2 = Address::generate(&env);
+        env.mock_all_auths();
+
+        let room_id = MapaGame::auto_match(&env, player1.clone(), MIN_STAKE_DEFAULT, 42);
+        MapaGame::join_room(&env, player2.clone(), room_id);
+
+        let room = MapaGame::get_room(&env, room_id);
+        assert_eq!(room.state, RoomState::Ready);
+        assert_eq!(room.location_id, 42);
+    }
+
+    #[test]
+    fn test_get_open_rooms() {
+        let (env, _admin, _vault, _token) = setup_test();
+        let p1 = Address::generate(&env);
+        let p2 = Address::generate(&env);
+        env.mock_all_auths();
+
+        let open = MapaGame::get_open_rooms(&env);
+        assert_eq!(open.len(), 0);
+
+        let rid = MapaGame::auto_match(&env, p1.clone(), MIN_STAKE_DEFAULT, 5);
+        let open = MapaGame::get_open_rooms(&env);
+        assert_eq!(open.len(), 1);
+        assert_eq!(open.get(0).unwrap().room_id, rid);
+
+        MapaGame::auto_match(&env, p2.clone(), MIN_STAKE_DEFAULT, 99);
+        let open = MapaGame::get_open_rooms(&env);
+        assert_eq!(open.len(), 0);
+    }
+
+    #[test]
+    fn test_leave_room() {
+        let (env, _admin, _vault, _token) = setup_test();
+        let player = Address::generate(&env);
+        env.mock_all_auths();
+
+        let rid = MapaGame::auto_match(&env, player.clone(), MIN_STAKE_DEFAULT, 1);
+        assert_eq!(MapaGame::get_open_rooms(&env).len(), 1);
+        MapaGame::leave_room(&env, player.clone(), rid);
+        assert_eq!(MapaGame::get_open_rooms(&env).len(), 0);
+    }
+
+    #[test]
+    #[should_panic(expected = "cannot join your own room")]
+    fn test_cannot_join_own_room() {
+        let (env, _admin, _vault, _token) = setup_test();
+        let player = Address::generate(&env);
+        env.mock_all_auths();
+        let rid = MapaGame::auto_match(&env, player.clone(), MIN_STAKE_DEFAULT, 1);
+        MapaGame::join_room(&env, player.clone(), rid);
     }
 
     #[test]
     fn test_submit_guess_and_resolve() {
         let (env, _admin, _vault, _token) = setup_test();
-        let player1 = Address::generate(&env);
-        let player2 = Address::generate(&env);
-
+        let p1 = Address::generate(&env);
+        let p2 = Address::generate(&env);
         env.mock_all_auths();
-        MapaGame::find_match(&env, player1.clone(), MIN_STAKE_DEFAULT, 1);
-        let room_id = MapaGame::find_match(&env, player2.clone(), MIN_STAKE_DEFAULT, 1);
+        let rid = MapaGame::auto_match(&env, p1.clone(), MIN_STAKE_DEFAULT, 1);
+        MapaGame::auto_match(&env, p2.clone(), MIN_STAKE_DEFAULT, 99);
 
-        MapaGame::submit_guess(&env, player1.clone(), room_id, 40000000, -74000000, 40748000, -74006000);
-        let room = MapaGame::get_room(&env, room_id);
+        MapaGame::submit_guess(&env, p1.clone(), rid, 40000000, -74000000, 40748000, -74006000);
+        let room = MapaGame::get_room(&env, rid);
         assert_eq!(room.state, RoomState::Guessed1);
 
-        MapaGame::submit_guess(&env, player2.clone(), room_id, 34000000, -118000000, 40748000, -74006000);
-        let room = MapaGame::get_room(&env, room_id);
+        MapaGame::submit_guess(&env, p2.clone(), rid, 34000000, -118000000, 40748000, -74006000);
+        let room = MapaGame::get_room(&env, rid);
         assert_eq!(room.state, RoomState::Completed);
-        assert_eq!(room.winner, Some(player1.clone()));
+        assert_eq!(room.winner, Some(p1.clone()));
     }
 
     #[test]
     #[should_panic(expected = "already guessed")]
     fn test_double_guess() {
         let (env, _admin, _vault, _token) = setup_test();
-        let player1 = Address::generate(&env);
-        let player2 = Address::generate(&env);
+        let p1 = Address::generate(&env);
+        let p2 = Address::generate(&env);
         env.mock_all_auths();
-        MapaGame::find_match(&env, player1.clone(), MIN_STAKE_DEFAULT, 1);
-        let room_id = MapaGame::find_match(&env, player2.clone(), MIN_STAKE_DEFAULT, 1);
-        MapaGame::submit_guess(&env, player1.clone(), room_id, 40000000, -74000000, 40748000, -74006000);
-        MapaGame::submit_guess(&env, player1.clone(), room_id, 41000000, -75000000, 40748000, -74006000);
-    }
-
-    #[test]
-    fn test_leave_queue() {
-        let (env, _admin, _vault, _token) = setup_test();
-        let player = Address::generate(&env);
-        env.mock_all_auths();
-        MapaGame::find_match(&env, player.clone(), MIN_STAKE_DEFAULT, 1);
-        assert_eq!(MapaGame::get_queue_count(&env), 1);
-        MapaGame::leave_queue(&env, player.clone());
-        assert_eq!(MapaGame::get_queue_count(&env), 0);
+        let rid = MapaGame::auto_match(&env, p1.clone(), MIN_STAKE_DEFAULT, 1);
+        MapaGame::auto_match(&env, p2.clone(), MIN_STAKE_DEFAULT, 99);
+        MapaGame::submit_guess(&env, p1.clone(), rid, 40000000, -74000000, 40748000, -74006000);
+        MapaGame::submit_guess(&env, p1.clone(), rid, 41000000, -75000000, 40748000, -74006000);
     }
 
     #[test]

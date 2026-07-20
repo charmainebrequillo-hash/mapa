@@ -7,7 +7,7 @@ import { useWallet } from "@/components/wallet/WalletProvider";
 import { useRouter } from "next/navigation";
 import { BackgroundGrid } from "@/components/BackgroundGrid";
 import { useEffect, useState } from "react";
-import { getMinStake, getQueueCount, formatStroops } from "@/lib/game";
+import { getMinStake, getOpenRooms, formatStroops } from "@/lib/game";
 import { CONTRACTS } from "@/lib/contract-ids";
 
 const ease = [0.25, 0.46, 0.45, 0.94] as const;
@@ -31,11 +31,11 @@ export default function LandingPage() {
   const { isConnected } = useWallet();
   const router = useRouter();
   const [minStake, setMinStake] = useState<number | null>(null);
-  const [queueCount, setQueueCount] = useState<number | null>(null);
+  const [openRoomCount, setOpenRoomCount] = useState<number | null>(null);
 
   useEffect(() => {
     getMinStake().then(setMinStake).catch(() => {});
-    getQueueCount().then(setQueueCount).catch(() => {});
+    getOpenRooms().then((r) => setOpenRoomCount(r.length)).catch(() => {});
   }, []);
 
   return (
@@ -116,11 +116,11 @@ export default function LandingPage() {
               </button>
             </motion.div>
 
-            {queueCount !== null && (
+            {openRoomCount !== null && (
               <motion.div variants={stagger.item} className="mt-12">
                 <div className="inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-white/[0.04] text-xs text-white/30 font-mono">
                   <Radio className="w-3 h-3 text-mapa-400/60" />
-                  <span>QUEUE: <span className="text-white/50">{queueCount}</span> player{queueCount !== 1 ? "s" : ""} waiting</span>
+                  <span>OPEN ROOMS: <span className="text-white/50">{openRoomCount}</span> room{openRoomCount !== 1 ? "s" : ""} available</span>
                   {minStake !== null && (
                     <span className="ml-2 text-white/20">| MIN STAKE: <span className="text-gold/60">{formatStroops(minStake)} XLM</span></span>
                   )}
