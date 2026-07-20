@@ -18,15 +18,10 @@ export function StreetView({ lat = 48.8566, lng = 2.3522, heading = 0, pitch = 0
   const panoramaRef = useRef<google.maps.StreetViewPanorama | null>(null);
   const { isLoaded, error: mapsError } = useGoogleMaps();
 
+  const displayError = error || mapsError;
+
   useEffect(() => {
-    if (mapsError) {
-      setLoading(false);
-      setError(mapsError);
-      return;
-    }
-    if (!ref.current || !isLoaded) {
-      return;
-    }
+    if (!ref.current || !isLoaded) return;
 
     setLoading(true);
     setError(null);
@@ -65,10 +60,10 @@ export function StreetView({ lat = 48.8566, lng = 2.3522, heading = 0, pitch = 0
           <Loader2 className="w-8 h-8 animate-spin text-mapa-400" />
         </div>
       )}
-      {error && (
+      {displayError && (
         <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/50 z-10 gap-3">
           <Compass className="w-12 h-12 text-white/20" />
-          <p className="text-white/40 text-sm">{error}</p>
+          <p className="text-white/40 text-sm">{displayError}</p>
         </div>
       )}
       <div ref={ref} className="w-full h-full" />

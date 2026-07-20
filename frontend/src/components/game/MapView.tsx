@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useEffect, useState, useCallback } from "react";
+import { useRef, useEffect, useState } from "react";
 import { useGoogleMaps } from "./GoogleMapsProvider";
 import { calculateDistance } from "@/lib/game";
 
@@ -28,7 +28,9 @@ export function MapView({ lat = 20, lng = 0, onClick, guess, actual, interactive
   const [distance, setDistance] = useState<number | null>(null);
   const [mapReady, setMapReady] = useState(false);
 
-  onClickRef.current = onClick;
+  useEffect(() => {
+    onClickRef.current = onClick;
+  }, [onClick]);
 
   useEffect(() => {
     if (mapsError || !isLoaded || !mapContainerRef.current || mapRef.current) return;

@@ -155,8 +155,8 @@ export default function PlayPage() {
       if (loc) setCurrentLocation(loc);
       startPolling(targetId);
       setPhase(r.state === RoomState.Ready ? "playing" : "waiting");
-    } catch (err: any) {
-      setMatchError(err.message);
+    } catch (err: unknown) {
+      setMatchError(err instanceof Error ? err.message : String(err));
     } finally { setLoading(false); }
   }
 
@@ -190,8 +190,8 @@ export default function PlayPage() {
         startPolling(resultId);
         setPhase("playing");
       }
-    } catch (err: any) {
-      setMatchError(err.message || "Auto-match failed");
+    } catch (err: unknown) {
+      setMatchError(err instanceof Error ? err.message : "Auto-match failed");
       setPhase("lobby");
     } finally { setLoading(false); }
   }
@@ -209,8 +209,8 @@ export default function PlayPage() {
       setCurrentLocation(loc);
       startPolling(targetId);
       setPhase("playing");
-    } catch (err: any) {
-      setMatchError(err.message || "Failed to join");
+    } catch (err: unknown) {
+      setMatchError(err instanceof Error ? err.message : "Failed to join");
     } finally { setLoading(false); }
   }
 

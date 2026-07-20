@@ -67,7 +67,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     ensureKit();
 
-    const unsub = StellarWalletsKit.on(KitEventType.STATE_UPDATED, (event: any) => {
+    const unsub = StellarWalletsKit.on(KitEventType.STATE_UPDATED, (event) => {
       if (event.payload.address) {
         setPublicKey(event.payload.address);
       } else {

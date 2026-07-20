@@ -12,6 +12,7 @@
     "@creit.tech/stellar-wallets-kit": "^2.5.0",
     "@googlemaps/react-wrapper": "^1.2.0",
     "@stellar/freighter-api": "^6.0.1",
+    "@vercel/analytics": "^1.5.0",
     "@stellar/stellar-sdk": "^16.0.1",
     "@tanstack/react-query": "^5.101.2",
     "@vercel/analytics": "^2.0.1",

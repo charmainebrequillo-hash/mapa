@@ -120,16 +120,16 @@ const ROOM_STATE_MAP: Record<string, RoomState> = {
   Claimed: RoomState.Claimed,
 };
 
-function parseRoomState(raw: any): RoomState {
+function parseRoomState(raw: unknown): RoomState {
   if (typeof raw === "number") return raw as RoomState;
   return ROOM_STATE_MAP[String(raw)] ?? RoomState.Waiting;
 }
 
 export async function getRoom(roomId: number): Promise<Room> {
-  const result: any = await readContract(CONTRACTS.mapaGame, "get_room", [arg.u64(roomId)]);
+  const result = await readContract(CONTRACTS.mapaGame, "get_room", [arg.u64(roomId)]) as Record<string, unknown>;
   return {
-    player1: result.player1.toString(),
-    player2: result.player2 ? result.player2.toString() : null,
+    player1: (result.player1 as { toString(): string }).toString(),
+    player2: result.player2 ? (result.player2 as { toString(): string }).toString() : null,
     location_id: Number(result.location_id),
     stake: Number(result.stake),
     guess1_lat: Number(result.guess1_lat) / 1_000_000,
@@ -138,15 +138,15 @@ export async function getRoom(roomId: number): Promise<Room> {
     guess2_lng: Number(result.guess2_lng) / 1_000_000,
     distance1: Number(result.distance1),
     distance2: Number(result.distance2),
-    winner: result.winner ? result.winner.toString() : null,
+    winner: result.winner ? (result.winner as { toString(): string }).toString() : null,
     state: parseRoomState(result.state),
     timestamp: Number(result.timestamp),
   };
 }
 
 export async function getOpenRooms(): Promise<OpenRoomInfo[]> {
-  const result: any = await readContract(CONTRACTS.mapaGame, "get_open_rooms", []);
-  return result.map((r: any) => ({
+  const result = await readContract(CONTRACTS.mapaGame, "get_open_rooms", []) as { room_id: number; player1: { toString(): string }; stake: number; timestamp: number }[];
+  return result.map((r) => ({
     room_id: Number(r.room_id),
     player1: r.player1.toString(),
     stake: Number(r.stake),
@@ -155,12 +155,12 @@ export async function getOpenRooms(): Promise<OpenRoomInfo[]> {
 }
 
 export async function getPlayerRooms(publicKey: string): Promise<number[]> {
-  const result: any = await readContract(CONTRACTS.mapaGame, "get_player_rooms", [arg.address(publicKey)]);
-  return result.map((id: any) => Number(id));
+  const result = await readContract(CONTRACTS.mapaGame, "get_player_rooms", [arg.address(publicKey)]) as number[];
+  return result.map((id: number) => Number(id));
 }
 
 export async function getLocation(locationId: number): Promise<Location> {
-  const result: any = await readContract(CONTRACTS.mapaLocationVault, "get_location", [arg.u64(locationId)]);
+  const result = await readContract(CONTRACTS.mapaLocationVault, "get_location", [arg.u64(locationId)]) as { lat: number; lng: number; image_ref: { toString(): string }; active: boolean };
   return {
     lat: Number(result.lat) / 1_000_000,
     lng: Number(result.lng) / 1_000_000,

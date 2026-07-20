@@ -1,4 +1,4 @@
-import { nativeToScVal, scValToNative, xdr, Address, TransactionBuilder, Account, Contract } from "@stellar/stellar-sdk";
+import { nativeToScVal, scValToNative, xdr, Address, TransactionBuilder, Account } from "@stellar/stellar-sdk";
 import { getRpc, getContract, getNetwork } from "./stellar";
 
 export const arg = {
