@@ -2,7 +2,7 @@
 
 import { useState, useCallback, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Loader2, Target, ArrowLeft, Coins, Trophy, Crosshair, Swords, Radio, Satellite, Search, Users, Clock, Hash } from "lucide-react";
+import { Loader2, Target, ArrowLeft, Coins, Trophy, Crosshair, Swords, Radio, Satellite, Search, Users, Clock, RotateCcw, LogOut } from "lucide-react";
 import { WalletConnector } from "@/components/wallet/WalletConnector";
 import { StreetView } from "@/components/game/StreetView";
 import { MapView } from "@/components/game/MapView";
@@ -41,15 +41,23 @@ export default function PlayPage() {
   const [minStake, setMinStake] = useState<number>(1000000);
   const [matchError, setMatchError] = useState<string | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const waitingPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [opponentGuess, setOpponentGuess] = useState<{ lat: number; lng: number } | null>(null);
   const [openRooms, setOpenRooms] = useState<OpenRoomInfo[]>([]);
   const [searchRoomId, setSearchRoomId] = useState("");
-  const [pastRooms, setPastRooms] = useState<number[]>([]);
+  const [activeRooms, setActiveRooms] = useState<{ id: number; room: Room }[]>([]);
+  const [completedRooms, setCompletedRooms] = useState<number[]>([]);
   const lobbyPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
     getMinStake().then(setMinStake).catch(() => {});
   }, []);
+
+  useEffect(() => {
+    if (!isConnected) {
+      handleReset();
+    }
+  }, [publicKey]);
 
   useEffect(() => {
     if (phase === "lobby" && isConnected) {
@@ -63,19 +71,42 @@ export default function PlayPage() {
 
   useEffect(() => {
     return () => {
-      if (pollRef.current) clearInterval(pollRef.current);
+      stopPolling();
+      stopWaitingPoll();
       if (lobbyPollRef.current) clearInterval(lobbyPollRef.current);
     };
   }, []);
 
+  function stopWaitingPoll() {
+    if (waitingPollRef.current) {
+      clearInterval(waitingPollRef.current);
+      waitingPollRef.current = null;
+    }
+  }
+
   async function refreshLobby() {
+    if (!publicKey) return;
     try {
       const [rooms, pRooms] = await Promise.all([
         getOpenRooms(),
-        publicKey ? getPlayerRooms(publicKey) : Promise.resolve([]),
+        getPlayerRooms(publicKey),
       ]);
       setOpenRooms(rooms);
-      setPastRooms(pRooms);
+
+      const active: { id: number; room: Room }[] = [];
+      const completed: number[] = [];
+      for (const id of pRooms) {
+        try {
+          const r = await getRoom(id);
+          if (r.state >= RoomState.Completed) {
+            completed.push(id);
+          } else if (r.state >= RoomState.Ready) {
+            active.push({ id, room: r });
+          }
+        } catch {}
+      }
+      setActiveRooms(active);
+      setCompletedRooms(completed);
     } catch {}
   }
 
@@ -116,6 +147,48 @@ export default function PlayPage() {
     }
   }
 
+  function handleReset() {
+    stopPolling();
+    stopWaitingPoll();
+    setPhase("lobby");
+    setRoomId(null);
+    setRoom(null);
+    setGuess(null);
+    setOpponentGuess(null);
+    setCurrentLocation(null);
+    setMatchError(null);
+    setSearchRoomId("");
+  }
+
+  async function handleRejoin(targetId: number) {
+    setLoading(true);
+    setMatchError(null);
+    try {
+      const r = await getRoom(targetId);
+      const inRoom = r.player1 === publicKey || r.player2 === publicKey;
+      if (!inRoom) {
+        setMatchError("Not a participant in this room");
+        setLoading(false);
+        return;
+      }
+      if (r.state >= RoomState.Completed) {
+        setMatchError("Room already finished");
+        setLoading(false);
+        return;
+      }
+      setRoomId(targetId);
+      setRoom(r);
+      const loc = await getLocation(r.location_id).catch(() => null);
+      if (loc) setCurrentLocation(loc);
+      startPolling(targetId);
+      setPhase(r.state === RoomState.Ready ? "playing" : "waiting");
+    } catch (err: any) {
+      setMatchError(err.message || "Failed to rejoin");
+    } finally {
+      setLoading(false);
+    }
+  }
+
   async function handleAutoMatch() {
     setLoading(true);
     setMatchError(null);
@@ -139,12 +212,12 @@ export default function PlayPage() {
 
       if (r.state === RoomState.Waiting) {
         setPhase("matching");
-        const waitPoll = setInterval(async () => {
+        waitingPollRef.current = setInterval(async () => {
           try {
             const updated = await getRoom(resultId);
             setRoom(updated);
             if (updated.state === RoomState.Ready) {
-              clearInterval(waitPoll);
+              stopWaitingPoll();
               startPolling(resultId);
               setPhase("playing");
             }
@@ -200,11 +273,11 @@ export default function PlayPage() {
   }
 
   async function handleCancelRoom() {
-    stopPolling();
+    stopWaitingPoll();
     if (roomId) {
       try { await leaveRoom(roomId, publicKey!, signTx); } catch {}
     }
-    setPhase("lobby");
+    handleReset();
   }
 
   function handleMapClick(lat: number, lng: number) {
@@ -226,14 +299,7 @@ export default function PlayPage() {
   }
 
   function handlePlayAgain() {
-    stopPolling();
-    setPhase("lobby");
-    setRoomId(null);
-    setRoom(null);
-    setGuess(null);
-    setOpponentGuess(null);
-    setCurrentLocation(null);
-    setMatchError(null);
+    handleReset();
   }
 
   const isPlayer1 = room && publicKey ? room.player1 === publicKey : true;
@@ -386,14 +452,40 @@ export default function PlayPage() {
                     </div>
                   </div>
 
-                  {pastRooms.length > 0 && (
+                  {activeRooms.length > 0 && (
+                    <div className="glass-panel p-5 border-mapa-400/10">
+                      <div className="flex items-center gap-2 mb-3">
+                        <Target className="w-4 h-4 text-mapa-400" />
+                        <h2 className="text-sm font-semibold">Active Games</h2>
+                      </div>
+                      <div className="space-y-1.5">
+                        {activeRooms.map(({ id, room: r }) => (
+                          <div key={id} className="flex items-center justify-between p-2 rounded-lg bg-white/[0.02]">
+                            <div className="text-[10px] font-mono text-white/30">
+                              <span className="text-mapa-400">#{id}</span>
+                              <span className="ml-2">vs {r.player1 === publicKey ? r.player2?.slice(0, 8) : r.player1.slice(0, 8)}...</span>
+                            </div>
+                            <button
+                              onClick={() => handleRejoin(id)}
+                              className="px-2.5 py-1 rounded bg-mapa-400/10 hover:bg-mapa-400/20 text-mapa-400 text-[9px] font-mono tracking-wider transition-all flex items-center gap-1"
+                            >
+                              <RotateCcw className="w-2.5 h-2.5" />
+                              Rejoin
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {completedRooms.length > 0 && (
                     <div className="glass-panel p-5">
                       <div className="flex items-center gap-2 mb-3">
                         <Clock className="w-4 h-4 text-white/30" />
                         <h2 className="text-sm font-semibold">History</h2>
                       </div>
                       <div className="space-y-1">
-                        {[...pastRooms].reverse().slice(0, 10).map((id) => (
+                        {[...completedRooms].reverse().slice(0, 10).map((id) => (
                           <button
                             key={id}
                             onClick={async () => {
@@ -401,16 +493,14 @@ export default function PlayPage() {
                                 const r = await getRoom(id);
                                 setRoom(r);
                                 setRoomId(id);
-                                if (r.state >= RoomState.Completed) {
-                                  setOpponentGuess(
-                                    r.player1 === publicKey
-                                      ? { lat: r.guess2_lat, lng: r.guess2_lng }
-                                      : { lat: r.guess1_lat, lng: r.guess1_lng }
-                                  );
-                                  const loc = await getLocation(r.location_id).catch(() => null);
-                                  if (loc) setCurrentLocation(loc);
-                                  setPhase("result");
-                                }
+                                setOpponentGuess(
+                                  r.player1 === publicKey
+                                    ? { lat: r.guess2_lat, lng: r.guess2_lng }
+                                    : { lat: r.guess1_lat, lng: r.guess1_lng }
+                                );
+                                const loc = await getLocation(r.location_id).catch(() => null);
+                                if (loc) setCurrentLocation(loc);
+                                setPhase("result");
                               } catch {}
                             }}
                             className="w-full text-left px-2 py-1.5 rounded text-[10px] font-mono text-white/20 hover:text-white/40 hover:bg-white/[0.03] transition-all"
@@ -434,25 +524,23 @@ export default function PlayPage() {
               exit={{ opacity: 0 }}
               className="flex flex-col items-center justify-center min-h-[70vh] gap-6"
             >
-              <div className="relative w-32 h-32">
-                <div className="absolute inset-0 rounded-full border border-mapa-400/10 animate-[ping_3s_ease-in-out_infinite]" />
-                <div className="absolute inset-4 rounded-full border border-mapa-400/15 animate-[ping_3s_ease-in-out_0.5s_infinite]" />
-                <div className="absolute inset-8 rounded-full border border-mapa-400/20 animate-[ping_3s_ease-in-out_1s_infinite]" />
+              <div className="relative w-24 h-24">
+                <div className="absolute inset-0 rounded-full border border-mapa-400/20 animate-ping" />
                 <div className="absolute inset-0 flex items-center justify-center">
-                  <Radio className="w-8 h-8 text-mapa-400 animate-pulse" />
+                  <Radio className="w-6 h-6 text-mapa-400" />
                 </div>
               </div>
               <div className="text-center">
-                <h2 className="text-lg font-bold mb-1.5">Awaiting Opponent</h2>
-                <p className="text-xs text-white/30 font-mono mb-1">
-                  {roomId ? `Room #${roomId} — ${formatStroops(room?.stake || 0)} XLM` : "Creating room..."}
+                <h2 className="text-lg font-bold mb-1">Awaiting Opponent</h2>
+                <p className="text-xs text-white/30 font-mono">
+                  {roomId ? `Room #${roomId} · ${formatStroops(room?.stake || 0)} XLM` : ""}
                 </p>
-                <p className="text-[10px] text-white/15 font-mono tracking-wider">BROADCASTING ON TESTNET</p>
               </div>
               <button
                 onClick={handleCancelRoom}
-                className="px-6 py-2 rounded-lg border border-white/10 hover:border-white/20 text-xs text-white/30 hover:text-white/50 font-mono tracking-wider transition-all"
+                className="px-5 py-2 rounded-lg border border-white/10 hover:border-white/20 text-xs text-white/40 hover:text-white/60 font-mono tracking-wider transition-all flex items-center gap-1.5"
               >
+                <LogOut className="w-3 h-3" />
                 Cancel
               </button>
             </motion.div>
@@ -500,30 +588,19 @@ export default function PlayPage() {
 
                   {phase === "waiting" && (
                     <div className="glass-panel p-4 text-center">
-                      <Loader2 className="w-5 h-5 animate-spin text-mapa-400/60 mx-auto mb-2" />
                       <p className="text-xs text-white/30 font-mono">Waiting for opponent to transmit coordinates...</p>
                     </div>
                   )}
 
                   {guess && phase === "playing" && (
                     <motion.div
-                      initial={{ opacity: 0, y: 10, scale: 0.95 }}
-                      animate={{ opacity: 1, y: 0, scale: 1 }}
-                      transition={{ type: "spring", stiffness: 200, damping: 20 }}
-                      className="glass-panel p-4 border-mapa-400/20"
+                      initial={{ opacity: 0, y: 8 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      className="glass-panel p-4 border-mapa-400/15"
                     >
                       <div className="flex items-center justify-between mb-3 pb-3 border-b border-white/[0.04]">
-                        <div className="flex items-center gap-2">
-                          <span className="relative flex h-2 w-2">
-                            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-mapa-400 opacity-75" />
-                            <span className="relative inline-flex rounded-full h-2 w-2 bg-mapa-400" />
-                          </span>
-                          <p className="text-[10px] text-white/20 font-mono tracking-wider uppercase">Target Locked</p>
-                        </div>
-                        <div className="text-right">
-                          <p className="text-xs font-mono text-mapa-400 tabular-nums">{guess.lat.toFixed(4)}N</p>
-                          <p className="text-xs font-mono text-mapa-400 tabular-nums">{guess.lng.toFixed(4)}E</p>
-                        </div>
+                        <p className="text-[10px] text-white/20 font-mono tracking-wider uppercase">Target Locked</p>
+                        <p className="text-xs font-mono text-mapa-400 tabular-nums">{guess.lat.toFixed(4)}N {guess.lng.toFixed(4)}E</p>
                       </div>
                       <div className="grid grid-cols-2 gap-2 mb-3">
                         <div className="bg-white/[0.03] rounded-lg p-2.5">
@@ -538,7 +615,7 @@ export default function PlayPage() {
                       <button
                         onClick={handleConfirmGuess}
                         disabled={loading}
-                        className="w-full py-3 rounded-xl bg-mapa-400 hover:bg-mapa-300 disabled:opacity-40 font-semibold text-[#111417] transition-all flex items-center justify-center gap-2 text-sm shadow-[0_0_16px_rgba(0,242,255,0.15)] hover:shadow-[0_0_24px_rgba(0,242,255,0.3)]"
+                        className="w-full py-3 rounded-xl bg-mapa-400 hover:bg-mapa-300 disabled:opacity-40 font-semibold text-[#111417] transition-all flex items-center justify-center gap-2 text-sm"
                       >
                         {loading ? (
                           <Loader2 className="w-4 h-4 animate-spin" />
