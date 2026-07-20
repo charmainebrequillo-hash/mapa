@@ -45,7 +45,7 @@ export function ResultScreen({ distance, score, prize = 0, locationName, onPlayA
               <circle
                 cx="60" cy="60" r="54"
                 fill="none"
-                stroke={isPerfect ? "#facc15" : isGood ? "#22c55e" : isOkay ? "#0c8ee6" : "#ef4444"}
+                stroke={isPerfect ? "#fed639" : isGood ? "#22c55e" : isOkay ? "#00f2ff" : "#ef4444"}
                 strokeWidth="8"
                 strokeDasharray={`${2 * Math.PI * 54}`}
                 strokeDashoffset={`${2 * Math.PI * 54 * (1 - scorePct / 100)}`}
@@ -80,7 +80,7 @@ export function ResultScreen({ distance, score, prize = 0, locationName, onPlayA
 
           <button
             onClick={onPlayAgain}
-            className="w-full py-3 rounded-xl bg-mapa-500 hover:bg-mapa-600 font-medium transition-all"
+            className="w-full py-3 rounded-xl bg-mapa-400 hover:bg-mapa-500 font-medium transition-all shadow-[0_0_20px_rgba(0,242,255,0.3)]"
           >
             Play Again
           </button>

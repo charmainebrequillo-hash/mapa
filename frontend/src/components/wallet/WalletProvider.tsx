@@ -43,15 +43,11 @@ export function useWallet() {
   return useContext(WalletContext);
 }
 
-export function WalletProvider({ children }: { children: ReactNode }) {
-  const [publicKey, setPublicKey] = useState<string | null>(null);
-  const [isConnecting, setIsConnecting] = useState(false);
-  const [kitReady, setKitReady] = useState(false);
+let kitInitialized = false;
 
-  const kit = StellarWalletsKit;
-
-  useEffect(() => {
-    kit.init({
+function ensureKit() {
+  if (!kitInitialized) {
+    StellarWalletsKit.init({
       modules: [
         new FreighterModule(),
         new xBullModule(),
@@ -60,8 +56,18 @@ export function WalletProvider({ children }: { children: ReactNode }) {
       ],
       network,
     });
+    kitInitialized = true;
+  }
+}
 
-    const unsub = kit.on(KitEventType.STATE_UPDATED, (event) => {
+export function WalletProvider({ children }: { children: ReactNode }) {
+  const [publicKey, setPublicKey] = useState<string | null>(null);
+  const [isConnecting, setIsConnecting] = useState(false);
+
+  useEffect(() => {
+    ensureKit();
+
+    const unsub = StellarWalletsKit.on(KitEventType.STATE_UPDATED, (event: any) => {
       if (event.payload.address) {
         setPublicKey(event.payload.address);
       } else {
@@ -69,7 +75,11 @@ export function WalletProvider({ children }: { children: ReactNode }) {
       }
     });
 
-    setKitReady(true);
+    StellarWalletsKit.getAddress()
+      .then(({ address }) => {
+        setPublicKey(address);
+      })
+      .catch(() => {});
 
     return () => {
       unsub();
@@ -79,7 +89,8 @@ export function WalletProvider({ children }: { children: ReactNode }) {
   const connect = useCallback(async () => {
     setIsConnecting(true);
     try {
-      const { address } = await kit.authModal();
+      ensureKit();
+      const { address } = await StellarWalletsKit.authModal();
       setPublicKey(address);
     } catch (err) {
       console.error("Failed to connect wallet:", err);
@@ -87,11 +98,11 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     } finally {
       setIsConnecting(false);
     }
-  }, [kitReady]);
+  }, []);
 
   const disconnect = useCallback(async () => {
     try {
-      await kit.disconnect();
+      await StellarWalletsKit.disconnect();
     } catch {
       // ignore
     }
@@ -100,7 +111,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
 
   const signTx = useCallback(
     async (tx: string): Promise<string> => {
-      const { signedTxXdr } = await kit.signTransaction(tx, {
+      const { signedTxXdr } = await StellarWalletsKit.signTransaction(tx, {
         networkPassphrase,
       });
       return signedTxXdr;

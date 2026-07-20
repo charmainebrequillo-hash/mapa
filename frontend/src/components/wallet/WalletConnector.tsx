@@ -7,18 +7,18 @@ export function WalletConnector() {
 
   if (isConnected && publicKey) {
     return (
-      <div className="flex items-center gap-1.5 md:gap-3">
-        <div className="flex items-center gap-1.5 md:gap-2 px-2 md:px-3 py-1 md:py-1.5 rounded-full bg-white/5 border border-white/10">
-          <div className="w-1.5 h-1.5 md:w-2 md:h-2 rounded-full bg-green-400 animate-pulse" />
-          <span className="text-xs md:text-sm text-white/70 font-mono">
+      <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-white/[0.03] border border-white/[0.06]">
+          <div className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse shadow-[0_0_6px_rgba(74,222,128,0.4)]" />
+          <span className="text-xs text-white/60 font-mono tracking-wide">
             {publicKey.slice(0, 4)}...{publicKey.slice(-4)}
           </span>
         </div>
         <button
           onClick={disconnect}
-          className="hidden sm:inline text-xs text-white/40 hover:text-white/70 transition-colors"
+          className="hidden sm:inline text-[10px] text-white/20 hover:text-white/50 transition-colors font-mono tracking-widest uppercase"
         >
-          Disconnect
+          Exit
         </button>
       </div>
     );
@@ -28,9 +28,9 @@ export function WalletConnector() {
     <button
       onClick={connect}
       disabled={isConnecting}
-      className="px-3 md:px-4 py-1.5 md:py-2 rounded-full bg-mapa-500 hover:bg-mapa-600 disabled:opacity-50 text-xs md:text-sm font-medium transition-all whitespace-nowrap"
+      className="px-4 py-1.5 rounded-lg bg-mapa-400/10 border border-mapa-400/20 hover:bg-mapa-400/20 hover:border-mapa-400/30 disabled:opacity-40 text-xs text-mapa-400 font-mono tracking-wider transition-all"
     >
-      {isConnecting ? "Connecting..." : "Connect Wallet"}
+      {isConnecting ? "CONNECTING..." : "CONNECT"}
     </button>
   );
 }

@@ -1,13 +1,14 @@
 "use client";
 
 import { useState, useCallback, useEffect, useRef } from "react";
-import { motion } from "framer-motion";
-import { Loader2, MapPin, Target, ArrowLeft, Globe, Play, Coins, Users, Clock, Trophy } from "lucide-react";
+import { motion, AnimatePresence } from "framer-motion";
+import { Loader2, MapPin, Target, ArrowLeft, Globe, Play, Coins, Users, Clock, Trophy, Crosshair, Swords, Radio, Satellite } from "lucide-react";
 import { WalletConnector } from "@/components/wallet/WalletConnector";
 import { StreetView } from "@/components/game/StreetView";
 import { MapView } from "@/components/game/MapView";
 import { ResultScreen } from "@/components/game/ResultScreen";
 import { useWallet } from "@/components/wallet/WalletProvider";
+import { BackgroundGrid } from "@/components/BackgroundGrid";
 import {
   findMatch,
   submitGuess,
@@ -17,6 +18,7 @@ import {
   getRandomLocation,
   getMinStake,
   getQueueCount,
+  getPlayerRooms,
   Room,
   RoomState,
   Location,
@@ -107,18 +109,21 @@ export default function PlayPage() {
       const result = await findMatch(publicKey!, stake, locationId, signTx);
 
       if (result === 0) {
-        const qc = await getQueueCount();
-        setQueueCount(qc);
+        const existingRooms = await getPlayerRooms(publicKey!);
+        setQueueCount(await getQueueCount());
         const pollMatching = setInterval(async () => {
-          const rId = await findMatch(publicKey!, stake, locationId, signTx);
-          if (rId > 0) {
-            clearInterval(pollMatching);
-            setRoomId(rId);
-            startPolling(rId);
-            setPhase("playing");
-          }
-          const qc = await getQueueCount().catch(() => 0);
-          setQueueCount(qc);
+          try {
+            const rooms = await getPlayerRooms(publicKey!);
+            const newRooms = rooms.filter((id) => !existingRooms.includes(id));
+            if (newRooms.length > 0) {
+              clearInterval(pollMatching);
+              const rId = newRooms[newRooms.length - 1];
+              setRoomId(rId);
+              startPolling(rId);
+              setPhase("playing");
+            }
+            setQueueCount(await getQueueCount());
+          } catch {}
         }, 3000);
       } else {
         setRoomId(result);
@@ -175,15 +180,19 @@ export default function PlayPage() {
   if (!isConnected) {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center gap-6 p-6">
-        <Globe className="w-14 h-14 md:w-16 md:h-16 text-mapa-400/50" />
-        <h1 className="text-xl md:text-2xl font-bold text-center">Connect Your Wallet</h1>
-        <p className="text-white/40 text-center max-w-sm md:max-w-md text-sm md:text-base">
-          Connect your Stellar wallet to find a match and play GeoGuessr.
-        </p>
+        <BackgroundGrid />
+        <Satellite className="w-14 h-14 text-mapa-400/40" />
+        <div className="text-center max-w-sm">
+          <h1 className="text-xl font-bold mb-2">Authentication Required</h1>
+          <p className="text-white/40 text-sm leading-relaxed font-mono">
+            [Connect your Stellar wallet to initialize the terminal and begin matchmaking.]
+          </p>
+        </div>
         <button
           onClick={connect}
-          className="px-8 py-3 rounded-full bg-mapa-500 hover:bg-mapa-600 font-medium transition-all text-sm md:text-base w-full max-w-xs"
+          className="px-8 py-3 rounded-xl bg-mapa-400 text-[#111417] font-semibold text-sm transition-all hover:bg-mapa-300 flex items-center gap-2 shadow-[0_0_24px_rgba(0,242,255,0.25)]"
         >
+          <Radio className="w-4 h-4" />
           Connect Wallet
         </button>
       </div>
@@ -191,210 +200,305 @@ export default function PlayPage() {
   }
 
   return (
-    <div className="min-h-screen px-3 py-3 md:p-6">
-      <nav className="flex items-center justify-between mb-4 md:mb-6">
-        <button
-          onClick={() => (phase === "lobby" ? (window.location.href = "/") : handlePlayAgain())}
-          className="flex items-center gap-1.5 md:gap-2 text-white/40 hover:text-white/70 transition-colors text-xs md:text-sm"
-        >
-          <ArrowLeft className="w-3.5 h-3.5 md:w-4 md:h-4" />
-          {phase === "lobby" ? "Home" : "Leave"}
-        </button>
-        <div className="flex items-center gap-2 md:gap-3">
-          <span className="text-xs md:text-sm text-white/30 font-mono hidden sm:inline">{publicKey?.slice(0, 6)}...</span>
-          <WalletConnector />
-        </div>
-      </nav>
-
-      {phase === "lobby" && (
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="flex flex-col items-center justify-center min-h-[60vh] px-2"
-        >
-          <div className="glass-panel p-6 md:p-12 text-center w-full max-w-sm md:max-w-md">
-            <Users className="w-12 h-12 md:w-16 md:h-16 text-mapa-400 mx-auto mb-4 md:mb-6" />
-            <h2 className="text-xl md:text-2xl font-bold mb-2 md:mb-3">Find a Match</h2>
-            <p className="text-white/40 mb-2 text-sm md:text-base">
-              Min stake: <span className="text-gold font-bold">{formatStroops(minStake)} XLM</span>
-            </p>
-            <p className="text-xs md:text-sm text-white/30 mb-4 md:mb-6">
-              Stake XLM against another player. Closest guess wins the pot!
-            </p>
-
-            <div className="mb-4 md:mb-6">
-              <label className="block text-xs md:text-sm text-white/40 mb-2 text-left">Your Stake (XLM)</label>
-              <input
-                type="number"
-                value={stakeAmount}
-                onChange={(e) => setStakeAmount(e.target.value)}
-                min={formatStroops(minStake)}
-                step="1"
-                className="w-full px-4 py-3 rounded-xl bg-white/5 border border-white/10 text-white font-mono text-base md:text-lg focus:outline-none focus:border-mapa-400 transition-colors"
-              />
-              <p className="text-xs text-white/20 mt-1 text-left">
-                Winner takes ~95% of the combined pot
-              </p>
-            </div>
-
-            {matchError && (
-              <p className="text-red-400 text-sm mb-4">{matchError}</p>
-            )}
-
-            <button
-              onClick={handleFindMatch}
-              disabled={loading}
-              className="w-full py-3 rounded-xl bg-mapa-500 hover:bg-mapa-600 disabled:opacity-50 font-medium transition-all flex items-center justify-center gap-2 text-sm md:text-base"
-            >
-              {loading ? (
-                <Loader2 className="w-5 h-5 animate-spin" />
-              ) : (
-                <>
-                  <Play className="w-4 h-4" />
-                  Find Match
-                </>
-              )}
-            </button>
-          </div>
-        </motion.div>
-      )}
-
-      {phase === "matching" && (
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          className="flex flex-col items-center justify-center min-h-[60vh] gap-4 md:gap-6 px-4"
-        >
-          <Loader2 className="w-14 h-14 md:w-16 md:h-16 animate-spin text-mapa-400" />
-          <h2 className="text-lg md:text-xl font-bold text-center">Searching for opponent...</h2>
-          <p className="text-white/40 text-xs md:text-sm flex items-center gap-2">
-            <Users className="w-3.5 h-3.5 md:w-4 md:h-4" />
-            {queueCount > 0 ? `${queueCount} player(s) in queue` : "No one in queue yet"}
-          </p>
+    <div className="min-h-screen">
+      <BackgroundGrid />
+      <div className="relative z-10 px-4 py-3 md:p-6 max-w-7xl mx-auto">
+        <nav className="flex items-center justify-between mb-5">
           <button
-            onClick={handleCancelMatch}
-            className="px-5 md:px-6 py-2 rounded-full border border-white/10 hover:bg-white/5 text-xs md:text-sm transition-all"
+            onClick={() => (phase === "lobby" ? (window.location.href = "/") : handlePlayAgain())}
+            className="flex items-center gap-1.5 text-white/30 hover:text-white/60 transition-colors text-xs font-mono tracking-wider"
           >
-            Cancel
+            <ArrowLeft className="w-3.5 h-3.5" />
+            {phase === "lobby" ? "Terminal" : "Disengage"}
           </button>
-        </motion.div>
-      )}
-
-      {(phase === "playing" || phase === "waiting") && currentLocation && (
-        <div className="max-w-5xl mx-auto grid grid-cols-1 lg:grid-cols-2 gap-4 md:gap-6">
-          <div>
-            <h3 className="text-xs md:text-sm text-white/40 mb-2 flex items-center gap-2">
-              <Target className="w-3 h-3" />
-              {phase === "playing" ? "Where is this?" : "Waiting for opponent..."}
-            </h3>
-            <StreetView lat={currentLocation.lat} lng={currentLocation.lng} />
+          <div className="flex items-center gap-3">
+            <span className="text-[10px] text-white/15 font-mono tracking-widest hidden sm:inline uppercase">
+              {publicKey?.slice(0, 6)}
+            </span>
+            <WalletConnector />
           </div>
+        </nav>
 
-          <div>
-            <h3 className="text-xs md:text-sm text-white/40 mb-2 flex items-center gap-2">
-              <MapPin className="w-3 h-3" />
-              {guess ? "You guessed here" : "Tap the map to place your guess"}
-            </h3>
-            <MapView
-              onClick={phase === "playing" ? handleMapClick : undefined}
-              guess={guess}
-              interactive={phase === "playing"}
-            />
-
-            {phase === "waiting" && (
-              <div className="mt-3 md:mt-4 glass-panel p-3 md:p-4 text-center">
-                <Loader2 className="w-5 h-5 md:w-6 md:h-6 animate-spin text-mapa-400 mx-auto mb-2" />
-                <p className="text-xs md:text-sm text-white/40">Waiting for opponent to submit their guess...</p>
-              </div>
-            )}
-
-            {guess && phase === "playing" && (
-              <motion.div
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-                className="mt-3 md:mt-4 glass-panel p-3 md:p-4"
-              >
-                <div className="flex items-center justify-between mb-3">
-                  <div>
-                    <p className="text-xs text-white/40">Your Guess</p>
-                    <p className="text-xs md:text-sm font-mono">
-                      {guess.lat.toFixed(4)}°, {guess.lng.toFixed(4)}°
-                    </p>
-                  </div>
+        <AnimatePresence mode="wait">
+          {phase === "lobby" && (
+            <motion.div
+              key="lobby"
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -20 }}
+              className="flex flex-col items-center justify-center min-h-[70vh]"
+            >
+              <div className="glass-panel p-8 md:p-10 text-center w-full max-w-sm">
+                <div className="w-14 h-14 rounded-2xl bg-mapa-400/5 border border-mapa-400/10 flex items-center justify-center mx-auto mb-5">
+                  <Swords className="w-6 h-6 text-mapa-400" />
                 </div>
+                <h2 className="text-xl font-bold mb-1">Initiate Match</h2>
+                <p className="text-xs text-white/30 font-mono mb-2">
+                  MIN STAKE: <span className="text-gold">{formatStroops(minStake)} XLM</span>
+                </p>
+                <p className="text-xs text-white/20 leading-relaxed mb-6">
+                  Stake XLM against another player. Closest guess wins the pot.
+                </p>
+
+                <div className="mb-5">
+                  <label className="block text-[10px] text-white/20 font-mono tracking-wider uppercase mb-2 text-left">
+                    Stake Amount (XLM)
+                  </label>
+                  <input
+                    type="number"
+                    value={stakeAmount}
+                    onChange={(e) => setStakeAmount(e.target.value)}
+                    min={formatStroops(minStake)}
+                    step="1"
+                    className="w-full px-4 py-3 rounded-xl bg-white/[0.03] border border-white/[0.06] text-white font-sans text-lg tracking-tight focus:outline-none focus:border-mapa-400/30 focus:bg-mapa-400/[0.02] transition-all"
+                  />
+                  <p className="text-[10px] text-white/15 font-mono mt-1.5 text-left">
+                    Winner receives ~97.5% of combined pot
+                  </p>
+                </div>
+
+                {matchError && (
+                  <p className="text-red-400/80 text-xs font-mono mb-4">{matchError}</p>
+                )}
+
                 <button
-                  onClick={handleConfirmGuess}
+                  onClick={handleFindMatch}
                   disabled={loading}
-                  className="w-full py-3 rounded-xl bg-green-500 hover:bg-green-600 disabled:opacity-50 font-medium transition-all flex items-center justify-center gap-2 text-sm md:text-base"
+                  className="w-full py-3.5 rounded-xl bg-mapa-400 hover:bg-mapa-300 disabled:opacity-40 font-semibold text-[#111417] transition-all flex items-center justify-center gap-2 text-sm shadow-[0_0_24px_rgba(0,242,255,0.2)] hover:shadow-[0_0_32px_rgba(0,242,255,0.35)]"
                 >
                   {loading ? (
-                    <Loader2 className="w-5 h-5 animate-spin" />
+                    <Loader2 className="w-4 h-4 animate-spin" />
                   ) : (
-                    "Confirm Guess"
+                    <>
+                      <Play className="w-4 h-4" />
+                      Find Match
+                    </>
                   )}
                 </button>
-              </motion.div>
-            )}
-          </div>
-        </div>
-      )}
-
-      {phase === "result" && currentLocation && room && (
-        <div className="max-w-5xl mx-auto">
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 md:gap-6 mb-4 md:mb-6">
-            <StreetView lat={currentLocation.lat} lng={currentLocation.lng} />
-            <MapView
-              lat={currentLocation.lat}
-              lng={currentLocation.lng}
-              guess={
-                isPlayer1
-                  ? { lat: room.guess1_lat, lng: room.guess1_lng }
-                  : { lat: room.guess2_lat, lng: room.guess2_lng }
-              }
-              actual={{ lat: currentLocation.lat, lng: currentLocation.lng }}
-              interactive={false}
-            />
-          </div>
-
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="glass-panel p-5 md:p-6 w-full max-w-sm md:max-w-lg mx-auto text-center"
-          >
-            <Trophy className={`w-10 h-10 md:w-12 md:h-12 mx-auto mb-2 md:mb-3 ${room.winner === publicKey ? "text-gold" : "text-white/20"}`} />
-            <h2 className={`text-xl md:text-2xl font-bold mb-2 ${room.winner === publicKey ? "text-gold" : "text-white/60"}`}>
-              {room.winner === publicKey ? "You Won!" : room.winner ? "You Lost" : "It's a Tie!"}
-            </h2>
-
-            <div className="grid grid-cols-2 gap-3 md:gap-4 mt-4 md:mt-6 mb-4 md:mb-6">
-              <div className="glass-panel p-2 md:p-3">
-                <p className="text-xs text-white/40 mb-1">{isPlayer1 ? "You" : "Opponent"}</p>
-                <p className="text-base md:text-lg font-bold">{formatDistance(isPlayer1 ? room.distance1 : room.distance2)}</p>
               </div>
-              <div className="glass-panel p-2 md:p-3">
-                <p className="text-xs text-white/40 mb-1">{isPlayer1 ? "Opponent" : "You"}</p>
-                <p className="text-base md:text-lg font-bold">{formatDistance(isPlayer1 ? room.distance2 : room.distance1)}</p>
-              </div>
-            </div>
+            </motion.div>
+          )}
 
-            {opponentGuess && (
-              <div className="glass-panel p-2 md:p-3 mb-4 md:mb-6">
-                <p className="text-xs text-white/40 mb-1">Opponent's guess</p>
-                <p className="text-xs md:text-sm font-mono">
-                  {opponentGuess.lat.toFixed(4)}°, {opponentGuess.lng.toFixed(4)}°
-                </p>
-              </div>
-            )}
-
-            <button
-              onClick={handlePlayAgain}
-              className="w-full py-3 rounded-xl bg-mapa-500 hover:bg-mapa-600 font-medium transition-all text-sm md:text-base"
+          {phase === "matching" && (
+            <motion.div
+              key="matching"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="flex flex-col items-center justify-center min-h-[70vh] gap-6"
             >
-              Play Again
-            </button>
-          </motion.div>
-        </div>
-      )}
+              <div className="relative w-32 h-32">
+                <div className="absolute inset-0 rounded-full border border-mapa-400/10 animate-[ping_3s_ease-in-out_infinite]" />
+                <div className="absolute inset-4 rounded-full border border-mapa-400/15 animate-[ping_3s_ease-in-out_0.5s_infinite]" />
+                <div className="absolute inset-8 rounded-full border border-mapa-400/20 animate-[ping_3s_ease-in-out_1s_infinite]" />
+                <div className="absolute inset-0 flex items-center justify-center">
+                  <Radio className="w-8 h-8 text-mapa-400 animate-pulse" />
+                </div>
+              </div>
+              <div className="text-center">
+                <h2 className="text-lg font-bold mb-1.5">Scanning for Opponent</h2>
+                <div className="flex items-center justify-center gap-2 mb-1">
+                  <div className="flex gap-0.5">
+                    {[0, 1, 2].map((i) => (
+                      <div
+                        key={i}
+                        className="w-1 h-3 rounded-full bg-mapa-400/60 animate-bounce"
+                        style={{ animationDelay: `${i * 0.15}s`, animationDuration: "1.2s" }}
+                      />
+                    ))}
+                  </div>
+                  <span className="text-xs text-white/30 font-mono">
+                    {queueCount > 0
+                      ? `${queueCount} player${queueCount !== 1 ? "s" : ""} in queue`
+                      : "Waiting for players..."}
+                  </span>
+                </div>
+                <p className="text-[10px] text-white/15 font-mono tracking-wider">BROADCASTING ON TESTNET</p>
+              </div>
+              <button
+                onClick={handleCancelMatch}
+                className="px-6 py-2 rounded-lg border border-white/10 hover:border-white/20 text-xs text-white/30 hover:text-white/50 font-mono tracking-wider transition-all"
+              >
+                Cancel
+              </button>
+            </motion.div>
+          )}
+
+          {(phase === "playing" || phase === "waiting") && currentLocation && (
+            <motion.div
+              key="playing"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="max-w-6xl mx-auto"
+            >
+              <div className="flex items-center justify-between mb-3 px-1">
+                <div className="flex items-center gap-2">
+                  <Target className="w-3.5 h-3.5 text-mapa-400" />
+                  <span className="text-xs font-mono text-white/30 tracking-wide">
+                    {phase === "playing" ? "ACQUIRE TARGET" : "AWAITING OPPONENT..."}
+                  </span>
+                </div>
+                {room && (
+                  <div className="flex items-center gap-1.5">
+                    <Coins className="w-3 h-3 text-white/20" />
+                    <span className="text-xs font-mono text-white/20">{formatStroops(room.stake)} XLM</span>
+                  </div>
+                )}
+              </div>
+
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                <div className="glass-panel p-1.5">
+                  <StreetView lat={currentLocation.lat} lng={currentLocation.lng} />
+                </div>
+
+                <div className="flex flex-col gap-4">
+                  <div className="glass-panel p-1.5">
+                    <MapView
+                      onClick={phase === "playing" ? handleMapClick : undefined}
+                      guess={guess}
+                      interactive={phase === "playing"}
+                    />
+                  </div>
+
+                  {phase === "waiting" && (
+                    <div className="glass-panel p-4 text-center">
+                      <Loader2 className="w-5 h-5 animate-spin text-mapa-400/60 mx-auto mb-2" />
+                      <p className="text-xs text-white/30 font-mono">Waiting for opponent to transmit coordinates...</p>
+                    </div>
+                  )}
+
+                  {guess && phase === "playing" && (
+                    <motion.div
+                      initial={{ opacity: 0, y: 10, scale: 0.95 }}
+                      animate={{ opacity: 1, y: 0, scale: 1 }}
+                      transition={{ type: "spring", stiffness: 200, damping: 20 }}
+                      className="glass-panel p-4 border-mapa-400/20"
+                    >
+                      <div className="flex items-center justify-between mb-3 pb-3 border-b border-white/[0.04]">
+                        <div className="flex items-center gap-2">
+                          <span className="relative flex h-2 w-2">
+                            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-mapa-400 opacity-75" />
+                            <span className="relative inline-flex rounded-full h-2 w-2 bg-mapa-400" />
+                          </span>
+                          <p className="text-[10px] text-white/20 font-mono tracking-wider uppercase">Target Locked</p>
+                        </div>
+                        <div className="text-right">
+                          <p className="text-xs font-mono text-mapa-400 tabular-nums">
+                            {guess.lat.toFixed(4)}N
+                          </p>
+                          <p className="text-xs font-mono text-mapa-400 tabular-nums">
+                            {guess.lng.toFixed(4)}E
+                          </p>
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2 mb-3">
+                        <div className="bg-white/[0.03] rounded-lg p-2.5">
+                          <p className="text-[9px] text-white/20 font-mono tracking-wider uppercase mb-0.5">Latitude</p>
+                          <p className="text-xs font-mono text-white/60">{guess.lat.toFixed(4)}</p>
+                        </div>
+                        <div className="bg-white/[0.03] rounded-lg p-2.5">
+                          <p className="text-[9px] text-white/20 font-mono tracking-wider uppercase mb-0.5">Longitude</p>
+                          <p className="text-xs font-mono text-white/60">{guess.lng.toFixed(4)}</p>
+                        </div>
+                      </div>
+                      <button
+                        onClick={handleConfirmGuess}
+                        disabled={loading}
+                        className="w-full py-3 rounded-xl bg-mapa-400 hover:bg-mapa-300 disabled:opacity-40 font-semibold text-[#111417] transition-all flex items-center justify-center gap-2 text-sm shadow-[0_0_16px_rgba(0,242,255,0.15)] hover:shadow-[0_0_24px_rgba(0,242,255,0.3)]"
+                      >
+                        {loading ? (
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                        ) : (
+                          <>
+                            <Crosshair className="w-4 h-4" />
+                            Confirm Strike
+                          </>
+                        )}
+                      </button>
+                    </motion.div>
+                  )}
+                </div>
+              </div>
+            </motion.div>
+          )}
+
+          {phase === "result" && currentLocation && room && (
+            <motion.div
+              key="result"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="max-w-5xl mx-auto"
+            >
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-5">
+                <div className="glass-panel p-1.5">
+                  <StreetView lat={currentLocation.lat} lng={currentLocation.lng} />
+                </div>
+                <div className="glass-panel p-1.5">
+                  <MapView
+                    lat={currentLocation.lat}
+                    lng={currentLocation.lng}
+                    guess={
+                      isPlayer1
+                        ? { lat: room.guess1_lat, lng: room.guess1_lng }
+                        : { lat: room.guess2_lat, lng: room.guess2_lng }
+                    }
+                    actual={{ lat: currentLocation.lat, lng: currentLocation.lng }}
+                    interactive={false}
+                  />
+                </div>
+              </div>
+
+              <motion.div
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.2 }}
+                className="glass-panel p-6 md:p-8 w-full max-w-lg mx-auto text-center"
+              >
+                <Trophy className={`w-12 h-12 mx-auto mb-3 ${room.winner === publicKey ? "text-gold drop-shadow-[0_0_12px_rgba(254,214,57,0.4)]" : "text-white/10"}`} />
+                <h2 className={`text-2xl font-bold mb-1 ${room.winner === publicKey ? "text-gold" : "text-white/40"}`}>
+                  {room.winner === publicKey ? "VICTORY" : room.winner ? "DEFEAT" : "STANDOFF"}
+                </h2>
+                <p className="text-xs text-white/20 font-mono mb-5">
+                  {room.winner === publicKey ? "Prize transmitted to your wallet" : room.winner ? "Better luck next sortie" : "Neither player found the mark"}
+                </p>
+
+                <div className="grid grid-cols-2 gap-3 mb-5">
+                  <div className="glass-panel p-3">
+                    <p className="text-[10px] text-white/20 font-mono tracking-wider uppercase mb-1">
+                      {isPlayer1 ? "You" : "Opponent"}
+                    </p>
+                    <p className="text-xl font-bold">{formatDistance(isPlayer1 ? room.distance1 : room.distance2)}</p>
+                  </div>
+                  <div className="glass-panel p-3">
+                    <p className="text-[10px] text-white/20 font-mono tracking-wider uppercase mb-1">
+                      {isPlayer1 ? "Opponent" : "You"}
+                    </p>
+                    <p className="text-xl font-bold">{formatDistance(isPlayer1 ? room.distance2 : room.distance1)}</p>
+                  </div>
+                </div>
+
+                {opponentGuess && (
+                  <div className="glass-panel p-3 mb-5">
+                    <p className="text-[10px] text-white/20 font-mono tracking-wider uppercase mb-1">Enemy Coordinates</p>
+                    <p className="text-sm font-mono text-white/50">
+                      {opponentGuess.lat.toFixed(4)}N, {opponentGuess.lng.toFixed(4)}E
+                    </p>
+                  </div>
+                )}
+
+                <button
+                  onClick={handlePlayAgain}
+                  className="w-full py-3.5 rounded-xl bg-mapa-400 hover:bg-mapa-300 font-semibold text-[#111417] transition-all text-sm shadow-[0_0_24px_rgba(0,242,255,0.2)] hover:shadow-[0_0_32px_rgba(0,242,255,0.35)]"
+                >
+                  Deploy Again
+                </button>
+              </motion.div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </div>
     </div>
   );
 }

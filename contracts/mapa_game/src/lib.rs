@@ -99,9 +99,15 @@ impl MapaGame {
         let token: Address = env.storage().instance().get(&DataKey::Token).unwrap();
         let queue: Vec<QueueEntry> = env.storage().instance().get(&DataKey::Queue).unwrap_or(Vec::new(&env));
 
+        for entry in queue.iter() {
+            if entry.player == player {
+                panic!("player already in queue");
+            }
+        }
+
         for i in 0..queue.len() {
             let entry = queue.get(i).unwrap();
-            if entry.stake == stake && entry.location_id == location_id {
+            if entry.player != player && entry.stake == stake && entry.location_id == location_id {
                 let mut new_queue: Vec<QueueEntry> = Vec::new(&env);
                 for j in 0..queue.len() {
                     if j != i {
