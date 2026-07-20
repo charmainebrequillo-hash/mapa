@@ -93,7 +93,7 @@ export default function PlayPage() {
         try {
           const r = await getRoom(id);
           if (r.state >= RoomState.Completed) completed.push(id);
-          else if (r.state >= RoomState.Ready) active.push({ id, room: r });
+          else if (r.state >= RoomState.Waiting) active.push({ id, room: r });
         } catch {}
       }
       setActiveRooms(active);
@@ -363,10 +363,14 @@ export default function PlayPage() {
                     <div key={id} className="flex items-center justify-between px-3 py-2 rounded-lg border border-mapa-400/10">
                       <div className="text-[11px] font-mono text-white/40">
                         <span className="text-mapa-400">#{id}</span>
-                        <span className="ml-2">vs {r.player1 === publicKey ? shorten(r.player2 || "") : shorten(r.player1)}</span>
+                        {r.state === RoomState.Waiting ? (
+                          <span className="ml-2 text-yellow-400/60">Awaiting opponent...</span>
+                        ) : (
+                          <span className="ml-2">vs {r.player1 === publicKey ? shorten(r.player2 || "") : shorten(r.player1)}</span>
+                        )}
                       </div>
                       <button onClick={() => handleRejoin(id)} className="px-2 py-1 rounded bg-mapa-400/10 hover:bg-mapa-400/20 text-mapa-400 text-[9px] font-mono tracking-wider transition-all flex items-center gap-1">
-                        <RotateCcw className="w-2.5 h-2.5" /> Rejoin
+                        <RotateCcw className="w-2.5 h-2.5" /> {r.state === RoomState.Waiting ? "Resume" : "Rejoin"}
                       </button>
                     </div>
                   ))}
