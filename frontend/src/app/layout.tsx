@@ -17,6 +17,10 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "Mapa — GeoGuessr on Stellar",
   description: "Stake XLM, guess locations, win prizes. A decentralized geography game on Stellar Soroban.",
+  icons: {
+    icon: "/favicon.ico",
+    apple: "/apple-icon.png",
+  },
 };
 
 export default function RootLayout({
