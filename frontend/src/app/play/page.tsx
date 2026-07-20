@@ -2,13 +2,14 @@
 
 import { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Loader2, Target, ArrowLeft, Coins, Trophy, Crosshair, Swords, Radio, Satellite, Search, Users, Clock, RotateCcw, LogOut, MapPin } from "lucide-react";
+import { Loader2, Target, ArrowLeft, Coins, Trophy, Crosshair, Swords, Radio, Satellite, Search, Users, Clock, RotateCcw, LogOut, MapPin, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 import { WalletConnector } from "@/components/wallet/WalletConnector";
 import { StreetView } from "@/components/game/StreetView";
 import { MapView } from "@/components/game/MapView";
 import { useWallet } from "@/components/wallet/WalletProvider";
 import { BackgroundGrid } from "@/components/BackgroundGrid";
+import { checkStreetViewCoverage } from "@/lib/streetview";
 import {
   autoMatch,
   joinRoom,
@@ -55,6 +56,7 @@ export default function PlayPage() {
   const [activeRooms, setActiveRooms] = useState<{ id: number; room: Room }[]>([]);
   const [completedRooms, setCompletedRooms] = useState<number[]>([]);
   const [lobbyTab, setLobbyTab] = useState<LobbyTab>("match");
+  const [svUnavailable, setSvUnavailable] = useState(false);
 
   useEffect(() => {
     getMinStake().then(setMinStake).catch(() => {});
@@ -147,6 +149,7 @@ export default function PlayPage() {
     setGuess(null);
     setOpponentGuess(null);
     setCurrentLocation(null);
+    setSvUnavailable(false);
     setMatchError(null);
   }
 
@@ -159,8 +162,27 @@ export default function PlayPage() {
       setRoom(r);
       const loc = await getLocation(r.location_id).catch(() => null);
       if (loc) setCurrentLocation(loc);
-      startPolling(targetId);
-      setPhase(r.state === RoomState.Ready ? "playing" : "waiting");
+      if (r.state === RoomState.Waiting) {
+        setPhase("matching");
+        waitingPollRef.current = setInterval(async () => {
+          try {
+            const updated = await getRoom(targetId);
+            setRoom(updated);
+            if (updated.state === RoomState.Ready) {
+              stopWaitingPoll();
+              startPolling(targetId);
+              toast.success("Opponent joined");
+              setPhase("playing");
+            }
+          } catch {}
+        }, 3000);
+      } else if (r.state === RoomState.Ready) {
+        startPolling(targetId);
+        setPhase("playing");
+      } else {
+        startPolling(targetId);
+        setPhase("waiting");
+      }
     } catch (err: unknown) {
       setMatchError(err instanceof Error ? err.message : String(err));
       toast.error("Failed to rejoin", { description: err instanceof Error ? err.message : String(err) });
@@ -173,9 +195,22 @@ export default function PlayPage() {
     try {
       const stake = Math.round(parseFloat(stakeAmount || "0") * 1_000_000);
       if (stake < minStake) { setMatchError("Minimum: " + formatStroops(minStake) + " XLM"); setLoading(false); return; }
-      const locationId = await getRandomLocation();
-      const location = await getLocation(locationId);
+      let svOk = false;
+      let locationId = 0;
+      let location: Location = { lat: 0, lng: 0, image_ref: "", active: false };
+      for (let attempt = 0; attempt < 5; attempt++) {
+        locationId = await getRandomLocation();
+        location = await getLocation(locationId);
+        svOk = await checkStreetViewCoverage(location.lat, location.lng);
+        if (svOk) break;
+      }
+      if (!svOk) {
+        setMatchError("Could not find a location with street view coverage");
+        setLoading(false);
+        return;
+      }
       setCurrentLocation(location);
+      setSvUnavailable(false);
       const resultId = await autoMatch(publicKey!, stake, locationId, signTx);
       toast.success("Room created", { description: "Room #" + resultId + " · " + formatStroops(stake) + " XLM" });
       setRoomId(resultId);
@@ -262,7 +297,7 @@ export default function PlayPage() {
 
   const lobbyContent = (
     <div className="max-w-2xl mx-auto">
-      <div className="flex gap-1 mb-4 p-0.5 rounded-lg bg-white/[0.03] border border-white/[0.04]">
+      <div className="flex items-center gap-1 mb-4 p-0.5 rounded-lg bg-white/[0.03] border border-white/[0.04]">
         {(["match", "browse", "history"] as const).map((tab) => (
           <button
             key={tab}
@@ -276,6 +311,13 @@ export default function PlayPage() {
             {tab === "match" ? "Play" : tab === "browse" ? "Rooms" : "History"}
           </button>
         ))}
+        <button
+          onClick={refreshLobby}
+          className="p-1.5 text-white/20 hover:text-mapa-400 transition-colors"
+          title="Refresh"
+        >
+          <RefreshCw className="w-3.5 h-3.5" />
+        </button>
       </div>
 
       <AnimatePresence mode="wait">
@@ -490,8 +532,8 @@ export default function PlayPage() {
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 <div className="border border-white/[0.04] rounded-lg overflow-hidden">
-                  <StreetView lat={currentLocation.lat} lng={currentLocation.lng} />
-                </div>
+                <StreetView lat={currentLocation.lat} lng={currentLocation.lng} interactive={phase === "playing"} onNoCoverage={() => setSvUnavailable(true)} />
+              </div>
 
                 <div className="flex flex-col gap-3">
                   <div className="border border-white/[0.04] rounded-lg overflow-hidden">
@@ -545,7 +587,7 @@ export default function PlayPage() {
               className="max-w-lg mx-auto"
             >
               <div className="border border-white/[0.04] rounded-lg overflow-hidden mb-4">
-                <StreetView lat={currentLocation.lat} lng={currentLocation.lng} />
+                <StreetView lat={currentLocation.lat} lng={currentLocation.lng} interactive={false} onNoCoverage={() => setSvUnavailable(true)} />
               </div>
               <div className="border border-white/[0.04] rounded-lg overflow-hidden mb-4">
                 <MapView

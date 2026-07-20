@@ -9,9 +9,11 @@ interface StreetViewProps {
   lng?: number;
   heading?: number;
   pitch?: number;
+  interactive?: boolean;
+  onNoCoverage?: () => void;
 }
 
-export function StreetView({ lat = 48.8566, lng = 2.3522, heading = 0, pitch = 0 }: StreetViewProps) {
+export function StreetView({ lat = 48.8566, lng = 2.3522, heading = 0, pitch = 0, interactive = true, onNoCoverage }: StreetViewProps) {
   const ref = useRef<HTMLDivElement>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -37,21 +39,24 @@ export function StreetView({ lat = 48.8566, lng = 2.3522, heading = 0, pitch = 0
           showRoadLabels: false,
           motionTracking: false,
           motionTrackingControl: false,
-          linksControl: false,
-          panControl: false,
+          linksControl: interactive,
+          panControl: interactive,
           enableCloseButton: false,
-          clickToGo: false,
-          scrollwheel: false,
-          disableDefaultUI: true,
+          clickToGo: interactive,
+          scrollwheel: interactive,
+          disableDefaultUI: !interactive,
+          zoomControl: interactive,
+          fullscreenControl: interactive,
         });
         panoramaRef.current = panorama;
         setLoading(false);
       } else {
         setError("No street view available for this location");
         setLoading(false);
+        onNoCoverage?.();
       }
     });
-  }, [lat, lng, isLoaded, mapsError]);
+  }, [lat, lng, isLoaded, mapsError, interactive]);
 
   return (
     <div className="street-view-container glass-panel relative">
