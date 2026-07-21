@@ -18,7 +18,7 @@ Mapa is a decentralized geography guessing game built on **Stellar Soroban**. Pl
 
 ## Architecture
 
-```
+```text
 ┌─────────────────────┐     ┌──────────────────────┐
 │   Next.js Frontend  │     │   Google Maps API    │
 │   (React 19)        │────▶│   Street View + Map  │
@@ -50,13 +50,18 @@ Mapa is a decentralized geography guessing game built on **Stellar Soroban**. Pl
 ![Location Vault Contract Deployment](images/location_contract.png)
 *MapaLocationVault contract deployed on Stellar testnet*
 
+![20 Test Passing Screenshot](images/testing.png)
+*Testing Screenshots*
+
 ### MapaGame (`contracts/mapa_game/`)
+
 - Game lifecycle management
 - Entry fee handling
 - Score calculation via Haversine distance
 - Prize distribution
 
 ### MapaLocationVault (`contracts/mapa_location_vault/`)
+
 - Location storage with lat/lng
 - Random location selection
 - Token (XLM) deposit, payout, and withdrawal
@@ -64,6 +69,7 @@ Mapa is a decentralized geography guessing game built on **Stellar Soroban**. Pl
 ## Getting Started
 
 ### Prerequisites
+
 - Rust + wasm32 target
 - Stellar CLI (`stellar`)
 - Node.js 20+

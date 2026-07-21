@@ -113,86 +113,120 @@ impl MapaLocationVault {
 #[cfg(test)]
 mod test {
     use super::*;
-    use soroban_sdk::{testutils::Address as _, vec, Env, IntoVal, Symbol};
+    use soroban_sdk::testutils::Address as _;
 
-    fn setup_test() -> (Env, Address) {
+    fn setup_test() -> (Env, MapaLocationVaultClient<'static>, Address) {
         let env = Env::default();
         let admin = Address::generate(&env);
-        MapaLocationVault::initialize(&env, admin.clone());
-        (env, admin)
+        let contract_id = env.register(MapaLocationVault, ());
+        let client = MapaLocationVaultClient::new(&env, &contract_id);
+        client.initialize(&admin);
+        (env, client, admin)
     }
 
     #[test]
-    fn test_initialize() {
-        let (env, admin) = setup_test();
-        assert_eq!(MapaLocationVault::get_admin(&env), admin);
-        assert_eq!(MapaLocationVault::get_location_count(&env), 0);
-    }
-
-    #[test]
-    fn test_add_location() {
-        let (env, admin) = setup_test();
+    fn add_then_remove_location_updates_active_index() {
+        let (env, client, admin) = setup_test();
         env.mock_all_auths();
-
-        let id = MapaLocationVault::add_location(
-            &env, admin.clone(),
-            40748000, -74006000,
-            &String::from_str(&env, "nyc_times_square"),
-        );
-
+        let image_ref = String::from_str(&env, "nyc_times_square");
+        let id = client.add_location(&admin, &40_748_000, &-74_006_000, &image_ref);
         assert_eq!(id, 1);
-        assert_eq!(MapaLocationVault::get_location_count(&env), 1);
-
-        let location = MapaLocationVault::get_location(&env, id);
-        assert_eq!(location.lat, 40748000);
-        assert_eq!(location.lng, -74006000);
+        assert_eq!(client.get_location_count(), 1);
+        let location = client.get_location(&id);
+        assert_eq!(location.lat, 40_748_000);
+        assert_eq!(location.lng, -74_006_000);
         assert!(location.active);
-    }
-
-    #[test]
-    fn test_add_multiple_locations() {
-        let (env, admin) = setup_test();
-        env.mock_all_auths();
-
-        let id1 = MapaLocationVault::add_location(&env, admin.clone(), 40748000, -74006000, &String::from_str(&env, "nyc"));
-        let id2 = MapaLocationVault::add_location(&env, admin.clone(), 34052200, -118243700, &String::from_str(&env, "la"));
-        let id3 = MapaLocationVault::add_location(&env, admin.clone(), 51488800, -132100, &String::from_str(&env, "london"));
-
-        assert_eq!(id1, 1);
-        assert_eq!(id2, 2);
-        assert_eq!(id3, 3);
-        assert_eq!(MapaLocationVault::get_location_count(&env), 3);
-    }
-
-    #[test]
-    fn test_remove_location() {
-        let (env, admin) = setup_test();
-        env.mock_all_auths();
-
-        let id = MapaLocationVault::add_location(&env, admin.clone(), 40748000, -74006000, &String::from_str(&env, "nyc"));
-        MapaLocationVault::remove_location(&env, admin, id);
-
-        let location = MapaLocationVault::get_location(&env, id);
+        client.remove_location(&admin, &id);
+        let location = client.get_location(&id);
         assert!(!location.active);
-        assert_eq!(MapaLocationVault::get_location_count(&env), 0);
+        assert_eq!(client.get_location_count(), 0);
     }
 
     #[test]
-    fn test_get_random_location() {
-        let (env, admin) = setup_test();
+    fn initialize_sets_the_admin_and_empty_index() {
+        let (env, client, admin) = setup_test();
+        assert_eq!(client.get_admin(), admin);
+        assert_eq!(client.get_location_count(), 0);
+        assert!(client.try_get_random_location().is_err());
+        let _ = env;
+    }
+
+    #[test]
+    fn add_location_assigns_sequential_ids() {
+        let (env, client, admin) = setup_test();
         env.mock_all_auths();
+        let first = client.add_location(&admin, &1, &2, &String::from_str(&env, "first"));
+        let second = client.add_location(&admin, &3, &4, &String::from_str(&env, "second"));
+        assert_eq!(first, 1);
+        assert_eq!(second, 2);
+        assert_eq!(client.get_location_count(), 2);
+    }
 
-        let id1 = MapaLocationVault::add_location(&env, admin.clone(), 40748000, -74006000, &String::from_str(&env, "nyc"));
-        let id2 = MapaLocationVault::add_location(&env, admin.clone(), 34052200, -118243700, &String::from_str(&env, "la"));
+    #[test]
+    fn add_location_persists_all_location_fields() {
+        let (env, client, admin) = setup_test();
+        env.mock_all_auths();
+        let image_ref = String::from_str(&env, "manila_intramuros");
+        let id = client.add_location(&admin, &14_589_600, &120_974_700, &image_ref);
+        assert_eq!(
+            client.get_location(&id),
+            Location { lat: 14_589_600, lng: 120_974_700, image_ref, active: true }
+        );
+    }
 
-        let rand_id = MapaLocationVault::get_random_location(&env);
-        assert!(rand_id == id1 || rand_id == id2);
+    #[test]
+    fn remove_location_keeps_other_locations_active() {
+        let (env, client, admin) = setup_test();
+        env.mock_all_auths();
+        let first = client.add_location(&admin, &1, &1, &String::from_str(&env, "one"));
+        let second = client.add_location(&admin, &2, &2, &String::from_str(&env, "two"));
+        client.remove_location(&admin, &first);
+        assert_eq!(client.get_location_count(), 1);
+        assert!(client.get_location(&second).active);
+        assert_eq!(client.get_random_location(), second);
+    }
+
+    #[test]
+    fn random_location_is_an_active_location() {
+        let (env, client, admin) = setup_test();
+        env.mock_all_auths();
+        let first = client.add_location(&admin, &1, &1, &String::from_str(&env, "one"));
+        let second = client.add_location(&admin, &2, &2, &String::from_str(&env, "two"));
+        let selected = client.get_random_location();
+        assert!(selected == first || selected == second);
+        assert!(client.get_location(&selected).active);
+    }
+
+    #[test]
+    #[should_panic(expected = "already initialized")]
+    fn initialize_cannot_run_twice() {
+        let (env, client, admin) = setup_test();
+        client.initialize(&admin);
+        let _ = env;
+    }
+
+    #[test]
+    #[should_panic(expected = "not authorized")]
+    fn add_location_rejects_non_admin() {
+        let (env, client, _admin) = setup_test();
+        env.mock_all_auths();
+        let other = Address::generate(&env);
+        client.add_location(&other, &0, &0, &String::from_str(&env, "blocked"));
+    }
+
+    #[test]
+    #[should_panic(expected = "not authorized")]
+    fn remove_location_rejects_non_admin() {
+        let (env, client, admin) = setup_test();
+        env.mock_all_auths();
+        let id = client.add_location(&admin, &0, &0, &String::from_str(&env, "owned"));
+        client.remove_location(&Address::generate(&env), &id);
     }
 
     #[test]
     #[should_panic(expected = "no active locations")]
-    fn test_get_random_empty() {
-        let (env, _admin) = setup_test();
-        MapaLocationVault::get_random_location(&env);
+    fn random_location_rejects_an_empty_vault() {
+        let (_env, client, _admin) = setup_test();
+        client.get_random_location();
     }
 }

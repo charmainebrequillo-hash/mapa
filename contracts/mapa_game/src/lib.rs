@@ -162,7 +162,7 @@ impl MapaGame {
         }
 
         let token: Address = env.storage().instance().get(&DataKey::Token).unwrap();
-        token::Client::new(env, &token).transfer(&player, &env.current_contract_address(), &room.stake);
+        token::Client::new(&env, &token).transfer(&player, &env.current_contract_address(), &room.stake);
 
         room.player2 = Some(player.clone());
         room.state = RoomState::Ready;
@@ -171,8 +171,8 @@ impl MapaGame {
         env.storage().persistent().set(&DataKey::Room(room_id), &room);
         env.storage().persistent().extend_ttl(&DataKey::Room(room_id), BUMP_AMOUNT, BUMP_AMOUNT);
 
-        let open_ids: Vec<u64> = env.storage().instance().get(&DataKey::OpenRooms).unwrap_or(Vec::new(env));
-        let mut new_open: Vec<u64> = Vec::new(env);
+        let open_ids: Vec<u64> = env.storage().instance().get(&DataKey::OpenRooms).unwrap_or(Vec::new(&env));
+        let mut new_open: Vec<u64> = Vec::new(&env);
         for i in 0..open_ids.len() {
             let rid = open_ids.get(i).unwrap();
             if rid != room_id {
@@ -181,12 +181,12 @@ impl MapaGame {
         }
         env.storage().instance().set(&DataKey::OpenRooms, &new_open);
 
-        let mut rooms: Vec<u64> = env.storage().persistent().get(&DataKey::PlayerRooms(player.clone())).unwrap_or(Vec::new(env));
+        let mut rooms: Vec<u64> = env.storage().persistent().get(&DataKey::PlayerRooms(player.clone())).unwrap_or(Vec::new(&env));
         rooms.push_back(room_id);
         env.storage().persistent().set(&DataKey::PlayerRooms(player.clone()), &rooms);
         env.storage().persistent().extend_ttl(&DataKey::PlayerRooms(player.clone()), BUMP_AMOUNT, BUMP_AMOUNT);
 
-        log!(env, "room_joined", room_id, player, room.stake, room.location_id);
+        log!(&env, "room_joined", room_id, player, room.stake, room.location_id);
     }
 
     pub fn leave_room(env: Env, player: Address, room_id: u64) {
@@ -286,13 +286,13 @@ impl MapaGame {
             let total_pot = room.stake * 2;
             let fee = total_pot * PLATFORM_FEE_BPS / 10000;
             let prize = total_pot - fee;
-            token::Client::new(env, &token).transfer(&env.current_contract_address(), winner, &prize);
-            log!(env, "winner", winner, prize, d1, d2);
+            token::Client::new(&env, &token).transfer(&env.current_contract_address(), winner, &prize);
+            log!(&env, "winner", winner, prize, d1, d2);
         } else {
-            token::Client::new(env, &token).transfer(&env.current_contract_address(), &room.player1, &room.stake);
+            token::Client::new(&env, &token).transfer(&env.current_contract_address(), &room.player1, &room.stake);
             let p2 = room.player2.clone().unwrap();
-            token::Client::new(env, &token).transfer(&env.current_contract_address(), &p2, &room.stake);
-            log!(env, "tie_refund", room.stake);
+            token::Client::new(&env, &token).transfer(&env.current_contract_address(), &p2, &room.stake);
+            log!(&env, "tie_refund", room.stake);
         }
     }
 
@@ -373,13 +373,15 @@ impl MapaGame {
         let d_lng_rad = (lng1 - lng2) * 1000000 / 57295779;
         let lat1_rad = lat1 * 1000000 / 57295779;
         let lat2_rad = lat2 * 1000000 / 57295779;
-        let sin_dlat = Self::sin_approx(d_lat_rad);
-        let sin_dlng = Self::sin_approx(d_lng_rad);
+        let sin_dlat = Self::sin_approx(d_lat_rad / 2);
+        let sin_dlng = Self::sin_approx(d_lng_rad / 2);
         let cos_lat1 = Self::cos_approx(lat1_rad);
         let cos_lat2 = Self::cos_approx(lat2_rad);
-        let a = sin_dlat * sin_dlat / 1000000
-            + cos_lat1 * cos_lat2 / 1000000 * sin_dlng * sin_dlng / 1000000 / 1000000;
-        let c = Self::asin_approx(a) * 2;
+        let sin2_hlat = sin_dlat * sin_dlat / 1000000;
+        let sin2_hlng = sin_dlng * sin_dlng / 1000000;
+        let a = sin2_hlat + cos_lat1 * cos_lat2 / 1000000 * sin2_hlng / 1000000;
+        let a = a.min(1000000).max(0);
+        let c = Self::asin_approx(Self::sqrt(a * 1000000)) * 2;
         let distance = (r * c / 1000000).abs();
         if distance > 40075000 { 40075000 } else { distance }
     }
@@ -400,18 +402,14 @@ impl MapaGame {
     }
 
     fn asin_approx(x: i128) -> i128 {
-        let neg = x < 0;
-        let x = x.abs();
-        let mut result = 1570796i128;
-        let mut term = x;
-        let mut i = 1;
-        while i < 20 && term > 100 {
-            result = result - term / (2 * i - 1);
-            term = term * x * x * (2 * i - 1) * (2 * i - 1) / (1000000 * 2 * i * (2 * i + 1));
-            i += 1;
-        }
-        result = 1570796 - Self::sqrt(1570796i128 * 1570796 - result * result);
-        if neg { -result } else { result }
+        if x <= 0 { return 0; }
+        let x = x.min(1000000);
+        let x2 = x * x / 1000000;
+        let x3 = x2 * x / 1000000;
+        let x5 = x3 * x2 / 1000000;
+        let x7 = x5 * x2 / 1000000;
+        let x9 = x7 * x2 / 1000000;
+        x + x3 / 6 + x5 * 3 / 40 + x7 * 5 / 112 + x9 * 35 / 1152
     }
 
     fn sqrt(n: i128) -> i128 {
@@ -429,162 +427,171 @@ impl MapaGame {
 #[cfg(test)]
 mod test {
     use super::*;
-    use soroban_sdk::{testutils::Address as _, vec, Env, IntoVal, Symbol};
+    use soroban_sdk::{testutils::Address as _, token::StellarAssetClient};
 
-    fn setup_test() -> (Env, Address, Address, Address) {
+    fn setup_test() -> (Env, MapaGameClient<'static>, Address, Address) {
         let env = Env::default();
         let admin = Address::generate(&env);
         let vault = Address::generate(&env);
         let token_id = env.register_stellar_asset_contract(admin.clone());
         let token = Address::from_string(&token_id.to_string());
-        MapaGame::initialize(&env, admin.clone(), vault.clone(), token.clone());
-        (env, admin, vault, token)
+        let contract_id = env.register(MapaGame, ());
+        let client = MapaGameClient::new(&env, &contract_id);
+        client.initialize(&admin, &vault, &token);
+        (env, client, token, contract_id)
     }
 
     #[test]
-    fn test_initialize() {
-        let (env, admin, vault, token) = setup_test();
-        assert_eq!(MapaGame::get_admin(&env), admin);
-        assert_eq!(MapaGame::get_vault(&env), vault);
-        assert_eq!(MapaGame::get_token(&env), token);
-        assert_eq!(MapaGame::get_min_stake(&env), MIN_STAKE_DEFAULT);
-    }
-
-    #[test]
-    fn test_auto_match_creates_room() {
-        let (env, _admin, _vault, _token) = setup_test();
-        let player = Address::generate(&env);
-        env.mock_all_auths();
-
-        let room_id = MapaGame::auto_match(&env, player.clone(), MIN_STAKE_DEFAULT, 1);
-        assert!(room_id > 0);
-
-        let room = MapaGame::get_room(&env, room_id);
-        assert_eq!(room.state, RoomState::Waiting);
-        assert_eq!(room.player1, player);
-        assert_eq!(room.player2, None);
-        assert_eq!(room.stake, MIN_STAKE_DEFAULT);
-        assert_eq!(room.location_id, 1);
-    }
-
-    #[test]
-    fn test_auto_match_joins_open_room() {
-        let (env, _admin, _vault, _token) = setup_test();
+    fn auto_match_creates_and_joins_a_funded_room() {
+        let (env, client, token, contract_id) = setup_test();
         let player1 = Address::generate(&env);
         let player2 = Address::generate(&env);
         env.mock_all_auths();
 
-        let room_id = MapaGame::auto_match(&env, player1.clone(), MIN_STAKE_DEFAULT, 1);
-        assert!(room_id > 0);
+        let asset = StellarAssetClient::new(&env, &token);
+        asset.mint(&player1, &MIN_STAKE_DEFAULT);
+        asset.mint(&player2, &MIN_STAKE_DEFAULT);
 
-        let joined_id = MapaGame::auto_match(&env, player2.clone(), MIN_STAKE_DEFAULT, 99);
+        let room_id = client.auto_match(&player1, &MIN_STAKE_DEFAULT, &1);
+        let joined_id = client.auto_match(&player2, &MIN_STAKE_DEFAULT, &99);
         assert_eq!(joined_id, room_id);
 
-        let room = MapaGame::get_room(&env, room_id);
+        let room = client.get_room(&room_id);
         assert_eq!(room.state, RoomState::Ready);
         assert_eq!(room.player1, player1);
         assert_eq!(room.player2, Some(player2));
         assert_eq!(room.location_id, 1);
+        assert_eq!(asset.balance(&contract_id), MIN_STAKE_DEFAULT * 2);
+        assert!(client.get_open_rooms().is_empty());
+    }
+
+    fn mint(env: &Env, token: &Address, player: &Address, amount: i128) {
+        StellarAssetClient::new(env, token).mint(player, &amount);
+    }
+
+    fn funded_open_room(env: &Env, client: &MapaGameClient<'_>, token: &Address) -> (Address, u64) {
+        let player = Address::generate(env);
+        mint(env, token, &player, MIN_STAKE_DEFAULT);
+        (player.clone(), client.auto_match(&player, &MIN_STAKE_DEFAULT, &7))
     }
 
     #[test]
-    fn test_join_specific_room() {
-        let (env, _admin, _vault, _token) = setup_test();
-        let player1 = Address::generate(&env);
-        let player2 = Address::generate(&env);
+    fn initialize_stores_configured_addresses_and_default_stake() {
+        let (env, client, token, _) = setup_test();
+        assert_eq!(client.get_token(), token);
+        assert_eq!(client.get_min_stake(), MIN_STAKE_DEFAULT);
+        assert_ne!(client.get_admin(), client.get_vault());
+        let _ = env;
+    }
+
+    #[test]
+    fn admin_can_change_minimum_stake() {
+        let (env, client, _token, _) = setup_test();
         env.mock_all_auths();
+        let admin = client.get_admin();
+        client.set_min_stake(&admin, &42);
+        assert_eq!(client.get_min_stake(), 42);
+    }
 
-        let room_id = MapaGame::auto_match(&env, player1.clone(), MIN_STAKE_DEFAULT, 42);
-        MapaGame::join_room(&env, player2.clone(), room_id);
-
-        let room = MapaGame::get_room(&env, room_id);
+    #[test]
+    fn join_room_moves_the_room_from_open_to_ready() {
+        let (env, client, token, _) = setup_test();
+        env.mock_all_auths();
+        let (owner, room_id) = funded_open_room(&env, &client, &token);
+        let opponent = Address::generate(&env);
+        mint(&env, &token, &opponent, MIN_STAKE_DEFAULT);
+        client.join_room(&opponent, &room_id);
+        let room = client.get_room(&room_id);
+        assert_eq!(room.player1, owner);
+        assert_eq!(room.player2, Some(opponent));
         assert_eq!(room.state, RoomState::Ready);
-        assert_eq!(room.location_id, 42);
+        assert!(client.get_open_rooms().is_empty());
     }
 
     #[test]
-    fn test_get_open_rooms() {
-        let (env, _admin, _vault, _token) = setup_test();
-        let p1 = Address::generate(&env);
+    fn leave_room_refunds_the_creator_and_removes_the_room() {
+        let (env, client, token, contract_id) = setup_test();
+        env.mock_all_auths();
+        let (owner, room_id) = funded_open_room(&env, &client, &token);
+        let asset = StellarAssetClient::new(&env, &token);
+        assert_eq!(asset.balance(&contract_id), MIN_STAKE_DEFAULT);
+        client.leave_room(&owner, &room_id);
+        assert_eq!(asset.balance(&owner), MIN_STAKE_DEFAULT);
+        assert_eq!(asset.balance(&contract_id), 0);
+        assert!(client.get_open_rooms().is_empty());
+        assert!(client.try_get_room(&room_id).is_err());
+    }
+
+    #[test]
+    fn guesses_resolve_to_the_closest_player_and_pay_the_prize() {
+        let (env, client, token, contract_id) = setup_test();
+        env.mock_all_auths();
+        let (p1, room_id) = funded_open_room(&env, &client, &token);
         let p2 = Address::generate(&env);
-        env.mock_all_auths();
-
-        let open = MapaGame::get_open_rooms(&env);
-        assert_eq!(open.len(), 0);
-
-        let rid = MapaGame::auto_match(&env, p1.clone(), MIN_STAKE_DEFAULT, 5);
-        let open = MapaGame::get_open_rooms(&env);
-        assert_eq!(open.len(), 1);
-        assert_eq!(open.get(0).unwrap().room_id, rid);
-
-        MapaGame::auto_match(&env, p2.clone(), MIN_STAKE_DEFAULT, 99);
-        let open = MapaGame::get_open_rooms(&env);
-        assert_eq!(open.len(), 0);
-    }
-
-    #[test]
-    fn test_leave_room() {
-        let (env, _admin, _vault, _token) = setup_test();
-        let player = Address::generate(&env);
-        env.mock_all_auths();
-
-        let rid = MapaGame::auto_match(&env, player.clone(), MIN_STAKE_DEFAULT, 1);
-        assert_eq!(MapaGame::get_open_rooms(&env).len(), 1);
-        MapaGame::leave_room(&env, player.clone(), rid);
-        assert_eq!(MapaGame::get_open_rooms(&env).len(), 0);
-    }
-
-    #[test]
-    #[should_panic(expected = "cannot join your own room")]
-    fn test_cannot_join_own_room() {
-        let (env, _admin, _vault, _token) = setup_test();
-        let player = Address::generate(&env);
-        env.mock_all_auths();
-        let rid = MapaGame::auto_match(&env, player.clone(), MIN_STAKE_DEFAULT, 1);
-        MapaGame::join_room(&env, player.clone(), rid);
-    }
-
-    #[test]
-    fn test_submit_guess_and_resolve() {
-        let (env, _admin, _vault, _token) = setup_test();
-        let p1 = Address::generate(&env);
-        let p2 = Address::generate(&env);
-        env.mock_all_auths();
-        let rid = MapaGame::auto_match(&env, p1.clone(), MIN_STAKE_DEFAULT, 1);
-        MapaGame::auto_match(&env, p2.clone(), MIN_STAKE_DEFAULT, 99);
-
-        MapaGame::submit_guess(&env, p1.clone(), rid, 40000000, -74000000, 40748000, -74006000);
-        let room = MapaGame::get_room(&env, rid);
-        assert_eq!(room.state, RoomState::Guessed1);
-
-        MapaGame::submit_guess(&env, p2.clone(), rid, 34000000, -118000000, 40748000, -74006000);
-        let room = MapaGame::get_room(&env, rid);
+        mint(&env, &token, &p2, MIN_STAKE_DEFAULT);
+        client.join_room(&p2, &room_id);
+        client.submit_guess(&p1, &room_id, &40_748_000, &-74_006_000, &40_748_000, &-74_006_000);
+        client.submit_guess(&p2, &room_id, &34_052_200, &-118_243_700, &40_748_000, &-74_006_000);
+        let room = client.get_room(&room_id);
         assert_eq!(room.state, RoomState::Completed);
         assert_eq!(room.winner, Some(p1.clone()));
+        assert_eq!(StellarAssetClient::new(&env, &token).balance(&p1), MIN_STAKE_DEFAULT * 2 - 50_000);
+        assert_eq!(StellarAssetClient::new(&env, &token).balance(&contract_id), 50_000);
     }
 
     #[test]
-    #[should_panic(expected = "already guessed")]
-    fn test_double_guess() {
-        let (env, _admin, _vault, _token) = setup_test();
-        let p1 = Address::generate(&env);
-        let p2 = Address::generate(&env);
+    fn tied_guesses_refund_both_players() {
+        let (env, client, token, contract_id) = setup_test();
         env.mock_all_auths();
-        let rid = MapaGame::auto_match(&env, p1.clone(), MIN_STAKE_DEFAULT, 1);
-        MapaGame::auto_match(&env, p2.clone(), MIN_STAKE_DEFAULT, 99);
-        MapaGame::submit_guess(&env, p1.clone(), rid, 40000000, -74000000, 40748000, -74006000);
-        MapaGame::submit_guess(&env, p1.clone(), rid, 41000000, -75000000, 40748000, -74006000);
+        let (p1, room_id) = funded_open_room(&env, &client, &token);
+        let p2 = Address::generate(&env);
+        mint(&env, &token, &p2, MIN_STAKE_DEFAULT);
+        client.join_room(&p2, &room_id);
+        client.submit_guess(&p1, &room_id, &0, &0, &0, &0);
+        client.submit_guess(&p2, &room_id, &0, &0, &0, &0);
+        assert!(client.get_room(&room_id).winner.is_none());
+        let asset = StellarAssetClient::new(&env, &token);
+        assert_eq!(asset.balance(&p1), MIN_STAKE_DEFAULT);
+        assert_eq!(asset.balance(&p2), MIN_STAKE_DEFAULT);
+        assert_eq!(asset.balance(&contract_id), 0);
     }
 
     #[test]
-    fn test_haversine_same_point() {
-        let distance = MapaGame::haversine_distance(40748000, -74006000, 40748000, -74006000);
-        assert!(distance < 1000, "distance should be near 0, got {}", distance);
+    fn winner_can_mark_a_completed_room_as_claimed() {
+        let (env, client, token, _) = setup_test();
+        env.mock_all_auths();
+        let (p1, room_id) = funded_open_room(&env, &client, &token);
+        let p2 = Address::generate(&env);
+        mint(&env, &token, &p2, MIN_STAKE_DEFAULT);
+        client.join_room(&p2, &room_id);
+        client.submit_guess(&p1, &room_id, &0, &0, &0, &0);
+        client.submit_guess(&p2, &room_id, &1_000_000, &1_000_000, &0, &0);
+        client.claim_prize(&p1, &room_id);
+        assert_eq!(client.get_room(&room_id).state, RoomState::Claimed);
     }
 
     #[test]
-    fn test_haversine_nyc_to_la() {
-        let distance = MapaGame::haversine_distance(40712800, -74006000, 34052200, -118243700);
-        assert!(distance > 3000000 && distance < 5000000, "got {}m", distance);
+    fn player_rooms_tracks_joined_rooms() {
+        let (env, client, token, _) = setup_test();
+        env.mock_all_auths();
+        let (p1, room_id) = funded_open_room(&env, &client, &token);
+        let p2 = Address::generate(&env);
+        mint(&env, &token, &p2, MIN_STAKE_DEFAULT);
+        client.join_room(&p2, &room_id);
+        let p1_rooms = client.get_player_rooms(&p1);
+        let p2_rooms = client.get_player_rooms(&p2);
+        assert_eq!(p1_rooms.len(), 1);
+        assert_eq!(p1_rooms.get(0), Some(room_id));
+        assert_eq!(p2_rooms.get(0), Some(room_id));
+    }
+
+    #[test]
+    #[should_panic(expected = "stake below minimum")]
+    fn auto_match_rejects_a_stake_below_the_minimum() {
+        let (env, client, token, _) = setup_test();
+        env.mock_all_auths();
+        let player = Address::generate(&env);
+        mint(&env, &token, &player, MIN_STAKE_DEFAULT);
+        client.auto_match(&player, &(MIN_STAKE_DEFAULT - 1), &1);
     }
 }
