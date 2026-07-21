@@ -945,7 +945,6 @@ dependencies = [
 name = "mapa_game"
 version = "0.1.0"
 dependencies = [
- "ed25519-dalek",
  "soroban-sdk",
 ]
 
@@ -953,7 +952,6 @@ dependencies = [
 name = "mapa_location_vault"
 version = "0.1.0"
 dependencies = [
- "ed25519-dalek",
  "soroban-sdk",
 ]
 
